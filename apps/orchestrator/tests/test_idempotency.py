@@ -8,13 +8,13 @@ from fieldflow_contract import make_event
 from sqlalchemy import func, select
 
 
-async def test_duplicate_event_is_processed_once(sessionmaker, vonage, salesforce):
+async def test_duplicate_event_is_processed_once(sessionmaker, vonage, graph):
     event = make_event()  # fixed eventId within this object → we reuse the same one twice
 
     async with sessionmaker() as s:
-        first = await case_service.handle_event(s, event, vonage=vonage, salesforce=salesforce)
+        first = await case_service.handle_event(s, event, graph=graph)
     async with sessionmaker() as s:
-        second = await case_service.handle_event(s, event, vonage=vonage, salesforce=salesforce)
+        second = await case_service.handle_event(s, event, graph=graph)
 
     assert first["status"] == "ok"
     assert second["status"] == "duplicate"

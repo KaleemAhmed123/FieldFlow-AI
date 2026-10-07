@@ -8,11 +8,11 @@ from fieldflow_contract import make_event
 from sqlalchemy import select
 
 
-async def test_event_produces_case_with_card_and_trace(sessionmaker, vonage, salesforce):
+async def test_event_produces_case_with_card_and_trace(sessionmaker, vonage, graph):
     event = make_event(work_order_id="WO-TEST-1")
 
     async with sessionmaker() as s:
-        result = await case_service.handle_event(s, event, vonage=vonage, salesforce=salesforce)
+        result = await case_service.handle_event(s, event, graph=graph)
     assert result["status"] == "ok"
 
     async with sessionmaker() as s:
