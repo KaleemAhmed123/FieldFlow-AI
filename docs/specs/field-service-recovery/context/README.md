@@ -1,8 +1,8 @@
 # FieldFlow AI — Project Context
 
-> **Design-time.** The shared mental model for the system we're building. Inspired by
-> `ONLYCOUPLEZ/docs/context`, but describing the **target** system (no code yet), not a live one.
-> As code lands, each file flips from "intended" to "how it works on `main`".
+> **Living doc.** The shared mental model for FieldFlow AI — written so anyone new can read the
+> codebase. It describes the whole target system; the walking-skeleton spine is built today and
+> the deeper layers are planned. See [`../scaffold.md`](../scaffold.md) for what runs now.
 
 Read in order the first time; jump by topic after.
 
@@ -13,7 +13,7 @@ Read in order the first time; jump by topic after.
 | 02 | [orchestration-and-policy](02-orchestration-and-policy.md) | LangGraph graph, the authority ladder, "every mutation". |
 | 03 | [knowledge-and-tools](03-knowledge-and-tools.md) | RAG (knowledge) vs MCP (live data + actions); read vs action tools. |
 | 04 | [rcs-experience](04-rcs-experience.md) | RCS as control plane; the primitives; the 13-stage journey; hard constraints. |
-| 05 | [reliability-and-observability](05-reliability-and-observability.md) | RabbitMQ/DLQ, idempotency, the 6 failure demos, real telemetry. |
+| 05 | [reliability-and-observability](05-reliability-and-observability.md) | RabbitMQ/DLQ, idempotency, the 6 failure demos, and Logfire — the live god-eye trace view. |
 | 06 | [principles-and-decisions](06-principles-and-decisions.md) | Why it's shaped this way; decisions made; open questions. |
 
 **The one idea that explains everything:** *AI proposes; deterministic policy decides; humans

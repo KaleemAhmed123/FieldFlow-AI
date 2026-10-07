@@ -1,6 +1,6 @@
 # Context: RCS Experience
 
-> **Design-time.** The customer-facing layer — and the whole reason Vonage cares. RCS is the
+> **Living doc.** The customer-facing layer — and the whole reason Vonage cares. RCS is the
 > **control plane**, not a notification channel. Rich version:
 > [`../diagrams/02-customer-journey.excalidraw`](../diagrams/02-customer-journey.excalidraw).
 
@@ -72,4 +72,4 @@ Then stage 13's failure demos (see [`05-reliability-and-observability.md`](05-re
 
 ---
 
-*Design-time snapshot: 2026-10-06 — Kaleem Ahmed*
+*Last updated 2026-10-07 — kept in sync with the code as it lands.*

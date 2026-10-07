@@ -1,9 +1,11 @@
 # Context: System Overview
 
-> **Design-time.** FieldFlow AI is not built yet. This folder describes the system **we intend
-> to build** — the shared mental model for the team and for your manager — not code that exists
-> today. As code lands, each file flips from "intended" to "how it works on `main`", ONLYCOUPLEZ-
-> style. Inspired by `ONLYCOUPLEZ/docs/context`.
+> **Living doc.** The shared mental model of FieldFlow AI — for the team and anyone new reading
+> the codebase. It describes the whole target system. Built today: the walking-skeleton spine
+> **plus the decision core** (real policy engine + full LangGraph flow with interrupt/resume +
+> failure modes NFR-4/5/6, all mock-first — see [`../build-step-1.md`](../build-step-1.md)). The
+> deeper layers (real tools, RAG, LLM, commerce) are planned. See [`../scaffold.md`](../scaffold.md)
+> for exactly what runs now vs what's next.
 >
 > Requirements live in [`../srs.md`](../srs.md). Risks in [`../risks.md`](../risks.md). Who builds
 > what in [`../roles.md`](../roles.md). Diagrams in [`../diagrams/`](../diagrams/).
@@ -52,7 +54,7 @@ CUSTOMER (Android · Google Messages · RCS)
    │   ▲
    │   │ reply (card / carousel / PDF)
    ▼   │
-VONAGE Messages API ──webhooks──▶ API/Webhook Gateway (Node)
+VONAGE Messages API (outbound RCS)   ·   FastAPI intake — /sim fires events (webhooks skipped, POC)
                                         │
                                      RabbitMQ  (retry · backoff · DLQ · idempotency)
                                         │
@@ -68,13 +70,14 @@ VONAGE Messages API ──webhooks──▶ API/Webhook Gateway (Node)
                      (CRM + inventory)        (quotes/orders) ─▶ Razorpay (Test)
 
    Underneath:  PostgreSQL (state · idempotency · audit · AI decisions · pgvector)
-                Prometheus / Grafana (observability)
+                Logfire (live request/case traces — the god-eye view) · Prometheus (metrics, optional)
 ```
 
-- **REST + webhooks** for Vonage inbound/status. **RabbitMQ** carries every event so nothing is
-  lost under failure. **LangGraph** holds the long-running case state and pauses for the customer.
-- **Salesforce Pub/Sub API** (its event stream) is the inbound trigger — we react to changes, we
-  don't poll.
+- **RabbitMQ** carries every event so nothing is lost under failure. **LangGraph** holds the
+  long-running case state and pauses for the customer. For the POC, events are fired via `/sim`;
+  inbound webhooks are skipped (see [`../scaffold.md`](../scaffold.md)).
+- **Salesforce Pub/Sub API** (its event stream) is the intended inbound trigger — react to
+  changes, don't poll. *Simulated via `/sim` in the POC.*
 
 ## The 7 layers (and why each earns its place)
 
@@ -86,27 +89,27 @@ VONAGE Messages API ──webhooks──▶ API/Webhook Gateway (Node)
 | 4 | Knowledge | **LlamaIndex + pgvector** | Salesforce has the data; RAG supplies the *knowledge* (fault codes, SOPs, compatibility). |
 | 5 | Tools | **MCP** | Exposes business systems as a small controlled tool surface, not 50 raw APIs in a prompt. |
 | 6 | Enterprise | **Salesforce FS + Service-Commerce + Razorpay** | Credible source of truth + a thin commerce seam for parts/quotes/pay. |
-| 7 | Reliability | **RabbitMQ + idempotency + DLQ + reconciliation + observability** | Makes it credible as production, not a demo. |
+| 7 | Reliability | **RabbitMQ + idempotency + DLQ + reconciliation + Logfire observability** | Makes it credible as production, not a demo. |
 
 Full justification: [`../srs.md`](../srs.md) §6.1. The anti-goal is **technology soup** — if a
 layer can't answer "why am I here" in one line, it's cut (risk R13).
 
 ## Component → where it will live
 
-> Repo is not scaffolded yet (that's the next task). This is the *intended* map.
+> The spine is scaffolded. This maps ownership across the full system.
 
 | Component | Owner | Notes |
 |-----------|-------|-------|
-| Vonage adapter (send/receive/failover/capability) | You | Mockable from day one; real once RCS access clears. |
-| Webhook gateway + RabbitMQ topology | You | Correlation id stamped here. |
+| Vonage adapter (send/receive/failover/capability) | You | Mocked today (FakeVonage); real once RCS access clears. |
+| Event intake (`/sim`) + RabbitMQ topology | You | Correlation id stamped here. Inbound webhooks skipped for the POC. |
 | LangGraph graph + Policy Engine | You | The decision core. |
 | RAG index + retrieval (LlamaIndex/pgvector) | You | Knowledge layer. |
 | MCP client | You | How the graph calls tools. |
 | MCP servers over Salesforce | You + SF Dev | **Co-owned** — you want hands-on here. |
 | Salesforce Field Service + Pub/Sub events | SF Dev | Domain + inventory + event source. |
-| Service-Commerce (parts/quotes/orders/pay/refund) | TBD (You?) | **Now a module inside the orchestrator** (Python), not a separate app. Reuses Eudoro *patterns*, not its domain. Ownership to confirm. |
-| Razorpay Test-Mode integration | You | Open-URL/webview + webhook back. |
-| Observability dashboards | You | Fed by real Vonage status callbacks. |
+| Service-Commerce (parts/quotes/orders/pay/refund) | You | A module **inside** the orchestrator (Python), not a separate app. Reuses proven commerce *patterns*, not any other product's domain. |
+| Razorpay Test-Mode integration | You | Open-URL/webview to a hosted page. |
+| Observability (Logfire traces + Prometheus metrics) | You | God-eye view of every request and case. |
 | Demo control panel | You | Live failure triggers for the showcase. |
 
 ## Glossary
@@ -136,11 +139,12 @@ layer can't answer "why am I here" in one line, it's cut (risk R13).
   policy engine + Salesforce decide validity. Anyone wiring "let the LLM reschedule" is wrong.
 - **Salesforce is the inventory system too** — we do *not* build a separate inventory store
   unless Field Service access blocks us.
-- **Eudoro is a pattern donor, not the domain.** We reuse its idempotency / payment / event /
-  reliability patterns. We do **not** present a gift-commerce engine as appliance commerce.
+- **Commerce reuses patterns, not a domain.** The service-commerce layer borrows proven
+  idempotency / payment / event / reliability patterns. We do **not** bolt an unrelated commerce
+  engine onto appliance repair.
 - **India = Android only** in Vonage coverage. An iOS demo will silently fail. Target is fixed.
 - **No real data, ever.** Fake customers/assets/numbers/amounts. Removes privacy concerns whole.
 
 ---
 
-*Design-time snapshot: 2026-10-06 — Kaleem Ahmed*
+*Last updated 2026-10-07 — kept in sync with the code as it lands.*

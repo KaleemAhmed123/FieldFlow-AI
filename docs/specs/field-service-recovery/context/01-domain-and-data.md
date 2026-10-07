@@ -1,6 +1,6 @@
 # Context: Domain & Data
 
-> **Design-time.** The domain model we build on. **Salesforce owns it** — we don't invent
+> **Living doc.** The domain model we build on. **Salesforce owns it** — we don't invent
 > work-order / technician / asset / inventory tables. Our own storage is small and exists only
 > for things Salesforce shouldn't hold: conversation state, idempotency, audit, AI decisions,
 > and the knowledge vectors.
@@ -55,7 +55,7 @@ Technician Van:   PCB-492 ×0
 ## Our PostgreSQL — the small, deliberate store
 
 Only what Salesforce shouldn't own. Everything here is keyed by **`correlationId`** (the recovery
-case), the way ONLYCOUPLEZ keys everything by `coupleId`.
+case) — the one tenancy key that scopes every case-related record in the system.
 
 | Table (intended) | Key | Why it exists |
 |------------------|-----|---------------|
@@ -95,4 +95,4 @@ Salesforce (truth about the business)  ──MCP read tools──▶  LangGraph 
 
 ---
 
-*Design-time snapshot: 2026-10-06 — Kaleem Ahmed*
+*Last updated 2026-10-07 — kept in sync with the code as it lands.*

@@ -1,6 +1,6 @@
 # Context: Knowledge (RAG) & Tools (MCP)
 
-> **Design-time.** Two separate concerns that are easy to confuse. **RAG = knowledge** (what's in
+> **Living doc.** Two separate concerns that are easy to confuse. **RAG = knowledge** (what's in
 > the manuals). **MCP = live data + actions** (what's true right now, and what we may change).
 
 ## The one rule
@@ -49,6 +49,15 @@ the Daikin XYZ-492 service manual and warranty policy v4."*
 ---
 
 ## Part B — Tools (MCP)
+
+> **Built in Step 2 (2026-10-08, mock-first) — see [`../build-step-2.md`](../build-step-2.md).**
+> The read/action surface below is live as an **in-process `Toolbox`** (`app/tools/registry.py`)
+> over the fakes: granular Salesforce reads compose the context, `inventory.reserve` and
+> `reschedule.confirm` are action tools that run the authority ladder and can refuse, and the
+> decision trace's `toolsUsed` is real. `GET /tools` exposes the surface. It is MCP-*shaped*, not
+> the wire protocol yet — a real hosted MCP client swaps into `build_toolbox()` at Step 9.
+> `knowledge.*`, `commerce.*`, `workorder.close` and `reschedule.propose` are named seams, not
+> built.
 
 ### What it solves
 
@@ -109,4 +118,4 @@ action tool.
 
 ---
 
-*Design-time snapshot: 2026-10-06 — Kaleem Ahmed*
+*Last updated 2026-10-08 — Tools (MCP) surface built mock-first in Step 2; RAG still a later step.*
