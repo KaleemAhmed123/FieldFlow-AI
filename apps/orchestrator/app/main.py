@@ -16,10 +16,14 @@ from app.api.routes import router as api_router
 from app.commerce import router as commerce_router
 from app.config import settings
 from app.db.session import dispose_db, get_sessionmaker, init_db
+from app.graph.build import build_graph
+from app.graph.checkpointer import make_checkpointer
 from app.logging import configure_logging, get_logger
 from app.queue.broker import Broker
 from app.services import case_service
 from app.sim.routes import router as sim_router
+from app.tools.inventory import FakeInventory
+from app.tools.registry import build_toolbox
 from app.tools.salesforce import FakeSalesforce
 from app.tools.vonage import FakeVonage
 
@@ -30,16 +34,23 @@ log = get_logger("main")
 async def lifespan(app: FastAPI):
     configure_logging(settings.log_level)
     await init_db()
+    # Mockable tools + the compiled graph: built once so paused cases resume on the same
+    # checkpointer. Swap the fakes / checkpointer for real ones in a later step.
     app.state.vonage = FakeVonage()
     app.state.salesforce = FakeSalesforce()
+    app.state.inventory = FakeInventory()
+    # The Toolbox is the controlled MCP-shaped surface over the fakes; the graph only ever calls
+    # tools through it. Swapping in a real MCP client later touches only this line.
+    app.state.toolbox = build_toolbox(app.state.salesforce, app.state.inventory)
+    app.state.graph = build_graph(
+        app.state.toolbox, app.state.vonage, checkpointer=make_checkpointer(),
+    )
 
     async def handle(routing_key: str, body: dict) -> None:
         if body.get("event") == "appointment.at_risk":
             event = AppointmentAtRisk(**body)
             async with get_sessionmaker()() as session:
-                await case_service.handle_event(
-                    session, event, vonage=app.state.vonage, salesforce=app.state.salesforce
-                )
+                await case_service.handle_event(session, event, graph=app.state.graph)
         else:
             log.info("event.ignored", routing_key=routing_key)
 
