@@ -10,7 +10,7 @@ from __future__ import annotations
 import uuid
 from datetime import UTC, datetime
 
-from sqlalchemy import JSON, DateTime, String
+from sqlalchemy import JSON, DateTime, Integer, String
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
 
@@ -34,6 +34,7 @@ class Case(Base):
     id: Mapped[str] = mapped_column(String, primary_key=True, default=_uuid)
     correlation_id: Mapped[str] = mapped_column(String, unique=True, index=True)
     status: Mapped[str] = mapped_column(String, default="NEW")
+    version: Mapped[int] = mapped_column(Integer, default=0)  # bumped each time options are sent
     context: Mapped[dict] = mapped_column(JSON, default=dict)
     decision_trace: Mapped[dict] = mapped_column(JSON, default=dict)
     sent_card: Mapped[dict | None] = mapped_column(JSON, nullable=True)
@@ -61,4 +62,19 @@ class AuditLog(Base):
     correlation_id: Mapped[str] = mapped_column(String, index=True)
     kind: Mapped[str] = mapped_column(String)
     payload: Mapped[dict] = mapped_column(JSON, default=dict)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
+
+
+class AiDecision(Base):
+    """The decision trace — the 'show your work' artifact. One row per decision/offer.
+
+    Holds the full {decision, reason[], knowledgeSources[], toolsUsed[], confidence,
+    policyResult, removed[]}. Append-only; Logfire mirrors this into live traces later.
+    """
+
+    __tablename__ = "ai_decisions"
+
+    id: Mapped[str] = mapped_column(String, primary_key=True, default=_uuid)
+    correlation_id: Mapped[str] = mapped_column(String, index=True)
+    decision: Mapped[dict] = mapped_column(JSON, default=dict)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
