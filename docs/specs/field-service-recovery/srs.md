@@ -122,8 +122,8 @@ Customer ─RCS→ Vonage ─webhook→ API Gateway ─→ RabbitMQ ─→ LangG
 - **Salesforce Field Service** — already models Account, Asset, Case, WorkOrder,
   ServiceAppointment, ServiceResource, Skill, Territory, ServiceContract, WarrantyTerm, and a
   full inventory model (ProductItem, ProductTransfer, ProductConsumed…). We don't reinvent it.
-- **Service-Commerce** — a tiny service (parts, quotes, orders, payments, refunds). Reuses
-  Eudoro's transaction/idempotency/payment patterns, **not** its gift-commerce domain.
+- **Service-Commerce** — a tiny module (parts, quotes, orders, payments, refunds). Reuses proven
+  transaction/idempotency/payment patterns, **not** an unrelated commerce domain.
 - **Reliability layer** — this is what makes it credible as production, not a demo. See §9.
 
 ## 7. Why RCS specifically (the headline justification)

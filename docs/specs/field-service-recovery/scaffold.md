@@ -95,15 +95,17 @@ dashboards beyond a couple of counters · payment/Razorpay · auth. Each is adde
 | Orchestration | **langgraph** (+ Postgres checkpointer later; memory in spine) | Durable, resumable case state. |
 | Contract | **Pydantic v2** models; export **JSON Schema** | Both sides validate; React gets TS types from the schema. |
 | Tests | **pytest** + **pytest-asyncio** | One idempotency test + one spine e2e test in v1. |
-| Frontend | **React + Vite + TS**, **Tailwind + shadcn/ui**, **TanStack Query**, WebSocket | Matches your ONLYCOUPLEZ stack; live case updates. |
+| Frontend | **React + Vite + TS**, **Tailwind + shadcn/ui**, **TanStack Query**, WebSocket | A standard, familiar React stack; live case updates. |
+| Observability | **Logfire** (live OTel traces / god-eye view) + Prometheus (metrics, optional) | See [`context/05-reliability-and-observability.md`](context/05-reliability-and-observability.md). |
 | Health & shutdown | FastAPI `/health` + `/ready`, graceful queue drain on SIGTERM | Feels real; safe restarts. |
 
 **Deliberately skipped (POC):** Kubernetes, CI/CD, multi-env, auth hardening, pre-commit gates.
 
 ## 6. Build order after the spine
 
-1. Spine (this scaffold).
-2. Policy engine + the full LangGraph nodes (options → validate → interrupt/resume).
+1. ✅ Spine (this scaffold).
+2. ✅ Policy engine + the full LangGraph nodes (options → validate → interrupt/resume) — **Step 1**,
+   see [`build-step-1.md`](build-step-1.md).
 3. MCP tool-interface filled with FakeSalesforce data; read tools then action tools.
 4. RAG (tiny pgvector corpus) feeding the decision.
 5. Groq wired for the decision + explanation step (with a cached fallback for live demos).
@@ -129,3 +131,8 @@ dashboards beyond a couple of counters · payment/Razorpay · auth. Each is adde
   git repo on `main` (no commits yet). Two pragmatic spine choices, to revisit: panel **polls**
   (WebSocket later); tables via **`create_all`** (alembic once schema settles). The live
   RabbitMQ hop is verified by `make up` + `make dev` + curl (manual), not by the tests.
+- **2026-10-07** — **Step 1 built & verified** (build order #2). Real policy engine + full
+  LangGraph flow with interrupt/resume + NFR-4/5/6, mock-first. **10/10 pytest pass**; **ruff
+  clean**; `app.main` imports; default `/sim` event still a 2-option OPTIONS_SENT carousel. One
+  choice to revisit: **in-memory checkpointer** (Postgres saver is a one-dep swap for
+  restart-durable resume). Details in [`build-step-1.md`](build-step-1.md).

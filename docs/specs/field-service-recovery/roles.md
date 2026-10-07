@@ -30,7 +30,7 @@ Legend: **D** = drives/owns · **G** = guides/reviews · **—** = not involved.
 | MCP servers over Salesforce | **D** | **D** | **Shared** — you want hands-on; dev knows the org. Co-own. |
 | Salesforce Field Service setup + data model | G | **D** | Dev executes; you review the object/event choices. |
 | Salesforce Pub/Sub event publishing | G | **D** | Dev wires events; you consume them. |
-| Service-commerce (parts/quotes/orders/payments/refunds) | G | **D** | Dev builds the thin service; reuses Eudoro patterns you point to. |
+| Service-commerce (parts/quotes/orders/payments/refunds) | **D** | G | A module inside the orchestrator (you own it); reuses proven commerce patterns. |
 | Razorpay Test-Mode integration | **D** | G | You've got the Razorpay experience. |
 | RabbitMQ + idempotency + retries + DLQ + reconciliation | **D** | — | Your reliability wheelhouse. |
 | Observability (Prometheus/Grafana) | **D** | G | Dashboards fed by real callbacks. |
