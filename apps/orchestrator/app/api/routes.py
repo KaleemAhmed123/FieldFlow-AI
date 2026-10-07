@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from fastapi import APIRouter
+from fastapi import APIRouter, Request
 from fastapi.responses import Response
 from prometheus_client import CONTENT_TYPE_LATEST, generate_latest
 from sqlalchemy import select
@@ -28,10 +28,27 @@ async def metrics() -> Response:
     return Response(generate_latest(), media_type=CONTENT_TYPE_LATEST)
 
 
+@router.get("/tools")
+async def list_tools(request: Request) -> dict:
+    """The controlled MCP-shaped surface the graph is allowed to touch.
+
+    Grouped by kind so the panel can show it plainly: reads are safe lookups the model may call
+    freely; actions are validated functions that run the authority ladder and may refuse — the
+    model calls them but never decides the result.
+    """
+    tools = request.app.state.toolbox.describe()
+    return {
+        "reads": [t for t in tools if t["kind"] == "read"],
+        "actions": [t for t in tools if t["kind"] == "action"],
+        "note": "Read = safe lookup. Action = validated; the function decides, may refuse.",
+    }
+
+
 def _view(c: Case) -> dict:
     return {
         "correlationId": c.correlation_id,
         "status": c.status,
+        "version": c.version,
         "context": c.context,
         "decisionTrace": c.decision_trace,
         "sentCard": (c.sent_card or {}).get("card") if c.sent_card else None,
