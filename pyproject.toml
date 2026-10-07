@@ -1,0 +1,13 @@
+# Virtual workspace root (no package of its own) — ties the members together for uv.
+[tool.uv.workspace]
+members = ["apps/orchestrator", "packages/contract"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
