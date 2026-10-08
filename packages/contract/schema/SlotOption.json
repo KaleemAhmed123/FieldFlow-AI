@@ -1,0 +1,28 @@
+{
+  "properties": {
+    "slotId": {
+      "title": "Slotid",
+      "type": "string"
+    },
+    "label": {
+      "title": "Label",
+      "type": "string"
+    },
+    "technician": {
+      "title": "Technician",
+      "type": "string"
+    },
+    "note": {
+      "default": "",
+      "title": "Note",
+      "type": "string"
+    }
+  },
+  "required": [
+    "slotId",
+    "label",
+    "technician"
+  ],
+  "title": "SlotOption",
+  "type": "object"
+}

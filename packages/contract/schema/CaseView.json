@@ -1,0 +1,117 @@
+{
+  "$defs": {
+    "Card": {
+      "description": "A minimal RCS-card-ish payload. FakeVonage 'sends' this; real Vonage renders it later.",
+      "properties": {
+        "kind": {
+          "title": "Kind",
+          "type": "string"
+        },
+        "title": {
+          "title": "Title",
+          "type": "string"
+        },
+        "options": {
+          "default": [],
+          "items": {
+            "$ref": "#/$defs/SlotOption"
+          },
+          "title": "Options",
+          "type": "array"
+        },
+        "payUrl": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Payurl"
+        }
+      },
+      "required": [
+        "kind",
+        "title"
+      ],
+      "title": "Card",
+      "type": "object"
+    },
+    "SlotOption": {
+      "properties": {
+        "slotId": {
+          "title": "Slotid",
+          "type": "string"
+        },
+        "label": {
+          "title": "Label",
+          "type": "string"
+        },
+        "technician": {
+          "title": "Technician",
+          "type": "string"
+        },
+        "note": {
+          "default": "",
+          "title": "Note",
+          "type": "string"
+        }
+      },
+      "required": [
+        "slotId",
+        "label",
+        "technician"
+      ],
+      "title": "SlotOption",
+      "type": "object"
+    }
+  },
+  "description": "What the control panel shows per recovery case.",
+  "properties": {
+    "correlationId": {
+      "title": "Correlationid",
+      "type": "string"
+    },
+    "status": {
+      "title": "Status",
+      "type": "string"
+    },
+    "context": {
+      "additionalProperties": true,
+      "default": {},
+      "title": "Context",
+      "type": "object"
+    },
+    "decisionTrace": {
+      "additionalProperties": true,
+      "default": {},
+      "title": "Decisiontrace",
+      "type": "object"
+    },
+    "sentCard": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/Card"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null
+    },
+    "updatedAt": {
+      "format": "date-time",
+      "title": "Updatedat",
+      "type": "string"
+    }
+  },
+  "required": [
+    "correlationId",
+    "status",
+    "updatedAt"
+  ],
+  "title": "CaseView",
+  "type": "object"
+}

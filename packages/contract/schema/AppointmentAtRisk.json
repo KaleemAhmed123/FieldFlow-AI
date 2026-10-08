@@ -1,0 +1,60 @@
+{
+  "properties": {
+    "eventId": {
+      "title": "Eventid",
+      "type": "string"
+    },
+    "correlationId": {
+      "title": "Correlationid",
+      "type": "string"
+    },
+    "event": {
+      "const": "appointment.at_risk",
+      "default": "appointment.at_risk",
+      "title": "Event",
+      "type": "string"
+    },
+    "occurredAt": {
+      "format": "date-time",
+      "title": "Occurredat",
+      "type": "string"
+    },
+    "appointmentId": {
+      "title": "Appointmentid",
+      "type": "string"
+    },
+    "workOrderId": {
+      "title": "Workorderid",
+      "type": "string"
+    },
+    "reason": {
+      "default": "technician_delay",
+      "enum": [
+        "technician_delay",
+        "traffic_weather",
+        "technician_no_show",
+        "customer_access_issue",
+        "part_missing",
+        "wrong_part_shipped",
+        "additional_fault_found",
+        "asset_complex",
+        "safety_risk",
+        "warranty_dispute"
+      ],
+      "title": "Reason",
+      "type": "string"
+    },
+    "detail": {
+      "additionalProperties": true,
+      "title": "Detail",
+      "type": "object"
+    }
+  },
+  "required": [
+    "correlationId",
+    "appointmentId",
+    "workOrderId"
+  ],
+  "title": "AppointmentAtRisk",
+  "type": "object"
+}

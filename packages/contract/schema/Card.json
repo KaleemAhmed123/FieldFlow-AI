@@ -1,0 +1,69 @@
+{
+  "$defs": {
+    "SlotOption": {
+      "properties": {
+        "slotId": {
+          "title": "Slotid",
+          "type": "string"
+        },
+        "label": {
+          "title": "Label",
+          "type": "string"
+        },
+        "technician": {
+          "title": "Technician",
+          "type": "string"
+        },
+        "note": {
+          "default": "",
+          "title": "Note",
+          "type": "string"
+        }
+      },
+      "required": [
+        "slotId",
+        "label",
+        "technician"
+      ],
+      "title": "SlotOption",
+      "type": "object"
+    }
+  },
+  "description": "A minimal RCS-card-ish payload. FakeVonage 'sends' this; real Vonage renders it later.",
+  "properties": {
+    "kind": {
+      "title": "Kind",
+      "type": "string"
+    },
+    "title": {
+      "title": "Title",
+      "type": "string"
+    },
+    "options": {
+      "default": [],
+      "items": {
+        "$ref": "#/$defs/SlotOption"
+      },
+      "title": "Options",
+      "type": "array"
+    },
+    "payUrl": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Payurl"
+    }
+  },
+  "required": [
+    "kind",
+    "title"
+  ],
+  "title": "Card",
+  "type": "object"
+}
