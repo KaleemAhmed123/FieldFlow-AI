@@ -54,7 +54,7 @@ CUSTOMER (Android · Google Messages · RCS)
    │   ▲
    │   │ reply (card / carousel / PDF)
    ▼   │
-VONAGE Messages API (outbound RCS)   ·   FastAPI intake — /sim fires events (webhooks skipped, POC)
+VONAGE Messages API (RCS send + real inbound/status webhooks, 9b)  ·  FastAPI intake — /sim fires SF events
                                         │
                                      RabbitMQ  (retry · backoff · DLQ · idempotency)
                                         │
@@ -75,7 +75,10 @@ VONAGE Messages API (outbound RCS)   ·   FastAPI intake — /sim fires events (
 
 - **RabbitMQ** carries every event so nothing is lost under failure. **LangGraph** holds the
   long-running case state and pauses for the customer. For the POC, events are fired via `/sim`;
-  inbound webhooks are skipped (see [`../scaffold.md`](../scaffold.md)).
+  the **Salesforce** inbound event is simulated via `/sim` (see [`../scaffold.md`](../scaffold.md)).
+  **Vonage RCS inbound (customer taps) + status callbacks are real webhooks** — built in
+  [`../build-step-9b.md`](../build-step-9b.md); `/sim/*` stays as the offline twin. (Razorpay payment
+  stays a `/sim/payment` poll — no Razorpay webhook.)
 - **Salesforce Pub/Sub API** (its event stream) is the intended inbound trigger — react to
   changes, don't poll. *Simulated via `/sim` in the POC.*
 
@@ -101,13 +104,13 @@ layer can't answer "why am I here" in one line, it's cut (risk R13).
 | Component | Owner | Notes |
 |-----------|-------|-------|
 | Vonage adapter (send/receive/failover/capability) | You | Mocked today (FakeVonage); real once RCS access clears. |
-| Event intake (`/sim`) + RabbitMQ topology | You | Correlation id stamped here. Inbound webhooks skipped for the POC. |
+| Event intake (`/sim`) + RabbitMQ topology | You | Correlation id stamped here. Salesforce inbound event simulated via `/sim`; **Vonage RCS inbound/status are real webhooks (9b)**. |
 | LangGraph graph + Policy Engine | You | The decision core. |
 | RAG index + retrieval (LlamaIndex/pgvector) | You | Knowledge layer. |
 | MCP client | You | How the graph calls tools. |
 | MCP servers over Salesforce | You + SF Dev | **Co-owned** — you want hands-on here. |
 | Salesforce Field Service + Pub/Sub events | SF Dev | Domain + inventory + event source. |
-| Service-Commerce (parts/quotes/orders/pay/refund) | You | A module **inside** the orchestrator (Python), not a separate app. Reuses proven commerce *patterns*, not any other product's domain. |
+| Service-Commerce (parts/quotes/orders/pay/refund) | You | A module **inside** the orchestrator (Python), not a separate app. **Built mock-first (Step 6):** price-book authority + `FakeRazorpay` behind a `PaymentGateway` seam; quote → Approve & Pay → capture, idempotent (no double-charge). Real Razorpay Test-Mode swaps in at the gated live step. |
 | Razorpay Test-Mode integration | You | Open-URL/webview to a hosted page. |
 | Observability (Logfire traces + Prometheus metrics) | You | God-eye view of every request and case. |
 | Demo control panel | You | Live failure triggers for the showcase. |
@@ -147,4 +150,4 @@ layer can't answer "why am I here" in one line, it's cut (risk R13).
 
 ---
 
-*Last updated 2026-10-07 — kept in sync with the code as it lands.*
+*Last updated 2026-10-08 — kept in sync with the code as it lands (commerce built in Step 6).*

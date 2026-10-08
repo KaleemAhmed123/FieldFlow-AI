@@ -56,8 +56,13 @@ the Daikin XYZ-492 service manual and warranty policy v4."*
 > `reschedule.confirm` are action tools that run the authority ladder and can refuse, and the
 > decision trace's `toolsUsed` is real. `GET /tools` exposes the surface. It is MCP-*shaped*, not
 > the wire protocol yet — a real hosted MCP client swaps into `build_toolbox()` at Step 9.
-> `knowledge.*`, `commerce.*`, `workorder.close` and `reschedule.propose` are named seams, not
-> built.
+> `knowledge.*`, `workorder.close` and `reschedule.propose` are named seams, not built.
+>
+> **Commerce tools built in Step 6 (2026-10-08, mock-first) — see [`../build-step-6.md`](../build-step-6.md).**
+> `commerce.create_quote`, `commerce.create_order`, `commerce.create_payment_link`,
+> `commerce.capture_payment` and `commerce.refund` are live action tools over a `FakeRazorpay`
+> gateway. The amount is set by a deterministic **price book** (the authority), not the LLM; capture
+> is idempotent (no double-charge). Real Razorpay Test-Mode swaps in at the gated live step.
 
 ### What it solves
 
@@ -88,12 +93,17 @@ access to the LLM.
 reschedule.propose(appointmentId)          -> [ SlotOption ]   (already policy-filtered)
 reschedule.confirm(appointmentId, slotId)  -> Result           (atomic)
 inventory.reserve(productItemId, qty)      -> Result           (atomic; may fail → NFR-5)
-commerce.create_quote(workOrderId, lines)  -> Quote
-commerce.create_order(quoteId)             -> Order
-commerce.create_payment_link(orderId)      -> { url }          (→ RCS Open-URL)
-commerce.refund(orderId)                   -> Result
+commerce.create_quote(workOrderId, lines)  -> Quote          (amount from the price book, BUILT)
+commerce.create_order(quoteId)             -> Order           (BUILT)
+commerce.create_payment_link(orderId)      -> { url }         (→ RCS Open-URL, BUILT)
+commerce.capture_payment(paymentId)        -> Result          (idempotent; no double-charge, BUILT)
+commerce.refund(orderId)                   -> Result          (a human approves refunds, BUILT)
 workorder.close(workOrderId)               -> { serviceReportId }
 ```
+
+(The illustrative signatures above are the intent; the shipped Step-6 shapes are in
+[`../build-step-6.md`](../build-step-6.md). Payment completion is a normal `/sim/payment` step in the
+POC, not an inbound webhook.)
 
 (Full signatures are the contract in [`../roles.md`](../roles.md) §4.2 — both tracks build
 against it.)
@@ -118,4 +128,5 @@ action tool.
 
 ---
 
-*Last updated 2026-10-08 — Tools (MCP) surface built mock-first in Step 2; RAG still a later step.*
+*Last updated 2026-10-08 — Tools (MCP) surface built mock-first in Step 2; RAG live (Step 4);
+commerce.* action tools built mock-first (Step 6).*
