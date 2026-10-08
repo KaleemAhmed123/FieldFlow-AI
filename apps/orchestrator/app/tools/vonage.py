@@ -1,11 +1,16 @@
 """The RCS send surface, behind an interface so the real Vonage swaps in without touching callers.
 
-Spine uses FakeVonage: it records the card instead of sending real RCS. Real Vonage Messages API
-goes here later (R1 must clear first).
+Spine uses FakeVonage: it records the card instead of sending real RCS. The real Vonage Messages
+API client (build step 9b) drops in behind the same Protocol — one wiring line in main.py changes.
+
+Mock-first + a safe default: `build_vonage` returns FakeVonage unless the real send is fully ARMED
+(key + secret + agent id AND a test recipient), so real (billed) keys can sit in .env during
+offline dev without a send ever firing by accident.
 """
 
 from __future__ import annotations
 
+import base64
 from typing import Protocol
 
 from fieldflow_contract import Card
@@ -14,19 +19,120 @@ from app.logging import get_logger
 
 log = get_logger("vonage")
 
+MAX_SUGGESTIONS = 4  # Vonage RCS allows at most 4 suggestions per card.
+
 
 class VonageClient(Protocol):
     def send_card(self, to: str, card: Card) -> dict: ...
+    def send_sms(self, to: str, text: str) -> dict: ...
 
 
 class FakeVonage:
-    """Records 'sent' cards in memory + returns the payload the panel renders."""
+    """Records 'sent' cards + SMS in memory + returns the payload the panel renders."""
 
     def __init__(self) -> None:
         self.sent: list[dict] = []
+        self.sms: list[dict] = []  # Step 7a: the RCS→SMS fallback lands here offline
 
     def send_card(self, to: str, card: Card) -> dict:
         payload = {"to": to, "card": card.model_dump(mode="json")}
         self.sent.append(payload)
         log.info("fake_vonage.send_card", to=to, kind=card.kind, options=len(card.options))
         return payload
+
+    def send_sms(self, to: str, text: str) -> dict:
+        payload = {"to": to, "sms": text}
+        self.sms.append(payload)
+        log.info("fake_vonage.send_sms", to=to, chars=len(text))
+        return payload
+
+
+def card_to_rcs(to: str, card: Card, agent_id: str, correlation_id: str) -> dict:
+    """Map our internal Card → a Vonage Messages API RCS payload.
+
+    - A carousel of slots → one card per slot, each with a single `suggested_reply` whose
+      `postback_data = "correlationId|slotId|version"`. Vonage echoes that string back verbatim on
+      the inbound webhook, so the webhook alone knows which case, which slot, and which offer
+      version (the stale-reply guard, NFR-6). Capped at 4 cards (the RCS suggestion limit).
+    - A payment card → a single `suggested_action` open-url to the Razorpay short link (one tap →
+      the hosted pay page). No postback: payment is confirmed by the Razorpay poll, not a webhook.
+
+    # ponytail: the exact RCS wire shape (message_type card/carousel + suggestions) is per Vonage's
+    # docs; it is the one spot to re-confirm at the gated live fire and is easy to adjust here.
+    """
+    base = {"from": agent_id, "to": to, "channel": "rcs"}
+    if card.kind == "payment":
+        return {**base, "message_type": "card", "card": {
+            "title": card.title[:200],
+            "suggestions": [{
+                "type": "suggested_action", "text": "Approve & Pay",
+                "postback_data": f"{correlation_id}|pay", "url": card.payUrl,
+            }],
+        }}
+    cards = [{
+        "title": o.label[:200],
+        "text": " · ".join(p for p in (o.technician, o.note) if p)[:2000],
+        "suggestions": [{
+            "type": "suggested_reply", "text": "Choose",
+            "postback_data": f"{correlation_id}|{o.slotId}|{card.version}",
+        }],
+    } for o in card.options[:MAX_SUGGESTIONS]]
+    return {**base, "message_type": "carousel", "carousel": {"cards": cards}}
+
+
+class VonageMessagesClient:
+    """Real Vonage Messages API over RCS. Auth is Basic (api_key:api_secret); `httpx` is imported
+    lazily so offline imports stay dependency-free (the dep is added only at the gated live fire).
+
+    The call site passes the correlationId as `to` (FakeVonage treats it as a label); the real send
+    goes to the one configured test device (`vonage_test_to`) and embeds that correlationId in the
+    card's postback, so the inbound webhook can resume the right case.
+    """
+
+    def __init__(self, *, api_key: str, api_secret: str, agent_id: str, to: str,
+                 url: str, timeout: float = 20.0) -> None:
+        self._auth = base64.b64encode(f"{api_key}:{api_secret}".encode()).decode()
+        self._agent_id, self._to, self._url, self._timeout = agent_id, to, url, timeout
+
+    def send_card(self, to: str, card: Card) -> dict:
+        correlation_id = to  # the call site passes correlationId here; the device is self._to
+        payload = card_to_rcs(self._to, card, self._agent_id, correlation_id)
+        import httpx  # lazy: runtime dep added at the gated live fire; offline never hits this
+        resp = httpx.post(self._url, json=payload, timeout=self._timeout,
+                          headers={"Authorization": f"Basic {self._auth}"})
+        resp.raise_for_status()
+        data = resp.json()
+        log.info("vonage.send_card", to=self._to, kind=card.kind,
+                 message_uuid=data.get("message_uuid"))
+        return {"to": self._to, "card": card.model_dump(mode="json"),
+                "messageUuid": data.get("message_uuid")}
+
+    def send_sms(self, to: str, text: str) -> dict:
+        """Step 7a fallback: the same options as a plain SMS when the RCS card didn't deliver."""
+        payload = {"from": self._agent_id, "to": self._to, "channel": "sms",
+                   "message_type": "text", "text": text}
+        import httpx  # lazy: runtime dep added at the gated live fire
+        resp = httpx.post(self._url, json=payload, timeout=self._timeout,
+                          headers={"Authorization": f"Basic {self._auth}"})
+        resp.raise_for_status()
+        data = resp.json()
+        log.info("vonage.send_sms", to=self._to, message_uuid=data.get("message_uuid"))
+        return {"to": self._to, "sms": text, "messageUuid": data.get("message_uuid")}
+
+
+def build_vonage(settings) -> VonageClient:
+    """Pick the client from settings. Real send is ARMED only when key+secret+agent_id AND a test
+    recipient are all set; otherwise FakeVonage (the safe offline default) — so real keys in .env
+    don't fire a billed send until you deliberately set VONAGE_TEST_TO right before a demo."""
+    armed = all((settings.vonage_api_key, settings.vonage_api_secret,
+                 settings.vonage_rcs_agent_id, settings.vonage_test_to))
+    if not armed:
+        if settings.vonage_api_key:
+            log.info("vonage.fake", reason="keys present but agent_id/test_to unset; not armed")
+        return FakeVonage()
+    log.info("vonage.live", to=settings.vonage_test_to)
+    return VonageMessagesClient(
+        api_key=settings.vonage_api_key, api_secret=settings.vonage_api_secret,
+        agent_id=settings.vonage_rcs_agent_id, to=settings.vonage_test_to,
+        url=settings.vonage_messages_url,
+    )
