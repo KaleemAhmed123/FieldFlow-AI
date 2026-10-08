@@ -71,6 +71,25 @@ def validate_options(candidates: list[dict], context: dict) -> tuple[list[dict],
     return valid, {"checked": CHECKS, "removed": removed, "policyResult": policy_result}
 
 
-def needs_human(confidence: float, policy_result: dict) -> bool:
+def needs_human(
+    confidence: float, policy_result: dict, threshold: float = CONFIDENCE_THRESHOLD
+) -> bool:
     """Level-3 gate (NFR-4): below the confidence threshold, or nothing legal to offer."""
-    return confidence < CONFIDENCE_THRESHOLD or policy_result.get("policyResult") == "DENIED"
+    return confidence < threshold or policy_result.get("policyResult") == "DENIED"
+
+
+def needs_human_for(
+    reason: str,
+    confidence: float,
+    policy_result: dict,
+    always_human: set[str] | None = None,
+    threshold: float = CONFIDENCE_THRESHOLD,
+) -> bool:
+    """Risk-tiered gate (OQ1). A human is required when ANY of:
+      - the reason is on the hard floor (`always_human`) — safety/legal cases are never
+        auto-approved on a model's confidence, regardless of score;
+      - confidence is below the threshold, or policy left nothing legal (the `needs_human` gate).
+    """
+    if always_human and reason in always_human:
+        return True
+    return needs_human(confidence, policy_result, threshold)
