@@ -28,6 +28,7 @@ from langgraph.graph import END, StateGraph
 from langgraph.types import Command, interrupt
 
 from app import policy
+from app.commerce.service import rupees
 from app.config import settings
 from app.llm.confidence import confidence_factors, score_confidence
 from app.llm.proposer import Proposer, build_proposer
@@ -52,6 +53,27 @@ def _add(used: list[str], *names: str) -> list[str]:
         if n not in out:
             out.append(n)
     return out
+
+
+def _is_chargeable(state: GraphState, chosen: dict) -> bool:
+    """Step-6 commerce trigger. A job is chargeable when the chosen option needs a part AND either
+    the asset is out of active warranty OR the reason is a newly-found fault outside the original
+    warranty scope (`additional_fault_found`). Warranty is the authority; no new event field."""
+    if not chosen.get("partNo"):
+        return False
+    warranty = state["context"].get("asset", {}).get("warranty")
+    reason = state["event"].get("reason", "")
+    return warranty != "active" or reason == "additional_fault_found"
+
+
+def _commerce_trace(state: GraphState, **extra: Any) -> dict:
+    """Merge commerce facts into the running decision trace (quote/order/payment)."""
+    decision = dict(state.get("decision", {}))
+    commerce = dict(decision.get("commerce", {}))
+    commerce.update(extra)
+    decision["commerce"] = commerce
+    return decision
+
 
 class GraphState(TypedDict, total=False):
     event: dict[str, Any]
@@ -79,6 +101,13 @@ class GraphState(TypedDict, total=False):
     executed: dict[str, Any]
     status: str
     note: str
+    # Commerce (Step 6): the chosen chargeable part, the quote/order/payment-link, and the result.
+    chosenPart: str
+    quote: dict[str, Any]
+    order: dict[str, Any]
+    paymentLink: dict[str, Any]
+    payment: dict[str, Any]
+    captured: dict[str, Any]
 
 
 def build_graph(
@@ -222,9 +251,9 @@ def build_graph(
                        note=c.get("note", ""))
             for c in state["options"]
         ]
-        card = Card(kind="carousel", title="Your appointment needs a small adjustment",
-                    options=opts)
         version = state.get("version", 0) + 1
+        card = Card(kind="carousel", title="Your appointment needs a small adjustment",
+                    options=opts, version=version)  # version → RCS postback (stale guard, NFR-6)
         sent = vonage.send_card(state["event"]["correlationId"], card)
         log.info("graph.offer_to_customer", options=len(opts), version=version)
         return {"card": card.model_dump(), "sent": sent, "version": version,
@@ -271,7 +300,86 @@ def build_graph(
         log.info("graph.execute", slotId=chosen["slotId"])
         # All exits from execute are dynamic (Command), so the superstep schedules exactly one
         # next node — no static edge, which would double-fire and clash on the `status` channel.
+        # route_commerce: a chargeable repair (OQ2 rule) detours through quote → pay before verify.
+        if _is_chargeable(state, chosen):
+            return Command(goto="build_quote",
+                           update={"executed": result, "status": "EXECUTED",
+                                   "chosenPart": chosen["partNo"]})
         return Command(goto="verify", update={"executed": result, "status": "EXECUTED"})
+
+    # --- Commerce branch (Step 6): quote → [human gate if high-value] → order+link → pay → settle.
+    # Each money step is a MUTATION; the deterministic work (price authority, amount checks,
+    # gateway) lives in the commerce.* action tools — the LLM still only proposed which part.
+    def build_quote(state: GraphState) -> GraphState:
+        part_no = state["chosenPart"]
+        quote = toolbox.call("commerce.create_quote",
+                             workOrderId=state["event"]["correlationId"], partNo=part_no).data
+        tools_used = _add(state.get("toolsUsed", []), "commerce.create_quote")
+        decision = _commerce_trace(state, quote=quote)
+        decision["reason"] = [*decision.get("reason", []),
+                              f"quote {rupees(quote['amountPaise'])} (authority: price_book)"]
+        log.info("graph.build_quote", amountPaise=quote["amountPaise"])
+        return {"quote": quote, "toolsUsed": tools_used, "decision": decision,
+                "status": "QUOTE_BUILT"}
+
+    def quote_approval(state: GraphState) -> GraphState:
+        # Risk-tiering: a high-value quote pauses for an operator (Level-3); /sim/approve resumes.
+        q = state["quote"]
+        decision = interrupt({
+            "type": "quote_approval", "quote": q, "amountPaise": q["amountPaise"],
+            "note": f"high-value quote {rupees(q['amountPaise'])} needs approval",
+        })
+        return {"approval": decision}
+
+    def create_payment(state: GraphState) -> GraphState:
+        quote = state["quote"]
+        order = toolbox.call("commerce.create_order", quote=quote).data
+        link = toolbox.call("commerce.create_payment_link", orderId=order["orderId"],
+                            amountPaise=order["amountPaise"], currency=order["currency"]).data
+        tools_used = _add(state.get("toolsUsed", []),
+                          "commerce.create_order", "commerce.create_payment_link")
+        decision = _commerce_trace(state, order=order, paymentLink=link)
+        log.info("graph.create_payment", orderId=order["orderId"])
+        return {"order": order, "paymentLink": link, "toolsUsed": tools_used,
+                "decision": decision, "status": "ORDER_CREATED"}
+
+    def offer_payment(state: GraphState) -> GraphState:
+        # One tap: the "Approve & Pay" card's button opens the Razorpay page (approve == pay).
+        quote = state["quote"]
+        card = Card(kind="payment", title=f"Approve & Pay {rupees(quote['amountPaise'])}",
+                    payUrl=state["paymentLink"]["shortUrl"])
+        version = state.get("version", 0) + 1
+        sent = vonage.send_card(state["event"]["correlationId"], card)
+        log.info("graph.offer_payment", amountPaise=quote["amountPaise"], version=version)
+        return {"card": card.model_dump(), "sent": sent, "version": version,
+                "status": "PAYMENT_PENDING"}
+
+    def await_payment(state: GraphState) -> GraphState:
+        # Interrupt and wait for the customer to complete payment (resumed via /sim/payment).
+        pay = interrupt({"type": "await_payment", "orderId": state["order"]["orderId"],
+                         "amountPaise": state["order"]["amountPaise"],
+                         "payUrl": state["paymentLink"]["shortUrl"]})
+        return {"payment": pay}
+
+    def settle_payment(state: GraphState):
+        pay = state["payment"]
+        # Confirm through the gateway keyed by the payment-LINK id: the real gateway polls Razorpay
+        # for the true status (no webhook); the fake honours the /sim-reported status. Idempotent →
+        # no double-charge (NFR-2). A non-captured outcome re-offers the pay card.
+        link_id = state["paymentLink"]["paymentLinkId"]
+        res = toolbox.call("commerce.capture_payment", paymentRef=link_id,
+                           amountPaise=state["order"]["amountPaise"],
+                           reportedStatus=pay.get("status", "captured"))
+        if not res.ok:
+            log.info("graph.payment_failed", reason=res.reason)
+            return Command(goto="offer_payment",
+                           update={"note": f"payment not completed ({res.reason}); re-offered"})
+        receipt = res.data
+        decision = _commerce_trace(state, payment=receipt)
+        log.info("graph.settle_payment", paymentRef=link_id,
+                 alreadyCaptured=receipt.get("alreadyCaptured"))
+        return Command(goto="verify",
+                       update={"captured": receipt, "decision": decision, "status": "PAID"})
 
     def verify(state: GraphState) -> GraphState:
         return {"status": "VERIFIED"}
@@ -288,7 +396,11 @@ def build_graph(
         ("evaluate_sla", evaluate_sla), ("generate_options", generate_options),
         ("policy_validate", policy_validate), ("human_approval", human_approval),
         ("offer_to_customer", offer_to_customer), ("await_reply", await_reply),
-        ("execute", execute), ("verify", verify), ("close", close),
+        ("execute", execute),
+        ("build_quote", build_quote), ("quote_approval", quote_approval),
+        ("create_payment", create_payment), ("offer_payment", offer_payment),
+        ("await_payment", await_payment), ("settle_payment", settle_payment),
+        ("verify", verify), ("close", close),
     ]:
         g.add_node(name, fn)
 
@@ -314,7 +426,25 @@ def build_graph(
     )
     g.add_edge("offer_to_customer", "await_reply")
     g.add_edge("await_reply", "execute")
-    # execute exits dynamically via Command(goto=...): verify | offer_to_customer | generate_options
+    # execute exits dynamically via Command(goto=...): verify | offer_to_customer |
+    # generate_options | build_quote (chargeable, Step 6).
+    # Commerce branch: high-value quotes pause for a human before any payment link is offered.
+    g.add_conditional_edges(
+        "build_quote",
+        lambda s: "quote_approval"
+        if s["quote"]["amountPaise"] >= settings.commerce_high_value_paise
+        else "create_payment",
+        {"quote_approval": "quote_approval", "create_payment": "create_payment"},
+    )
+    g.add_conditional_edges(
+        "quote_approval",
+        lambda s: "create_payment" if s.get("approval", {}).get("approved") else "close",
+        {"create_payment": "create_payment", "close": "close"},
+    )
+    g.add_edge("create_payment", "offer_payment")
+    g.add_edge("offer_payment", "await_payment")
+    g.add_edge("await_payment", "settle_payment")
+    # settle_payment exits dynamically via Command(goto=...): verify | offer_payment (retry).
     g.add_edge("verify", "close")
     g.add_edge("close", END)
     return g.compile(checkpointer=checkpointer)

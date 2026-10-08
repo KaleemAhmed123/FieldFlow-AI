@@ -18,9 +18,11 @@ class SlotOption(BaseModel):
 class Card(BaseModel):
     """A minimal RCS-card-ish payload. FakeVonage 'sends' this; real Vonage renders it later."""
 
-    kind: str                       # "carousel" | "text" | ...
+    kind: str                       # "carousel" | "text" | "payment" | ...
     title: str
     options: list[SlotOption] = []
+    payUrl: str | None = None       # Open-URL target for an "Approve & Pay" button (Step 6)
+    version: int = 0                # the offer version, echoed into RCS postback for the stale guard
 
 
 class CaseView(BaseModel):
