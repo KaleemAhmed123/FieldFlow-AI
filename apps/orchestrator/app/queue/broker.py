@@ -77,6 +77,50 @@ class Broker:
 
         await self._queue.consume(on_message)
 
+    async def dlq_stats(self) -> dict:
+        """How many messages are parked in the dead-letter queue (read-only, passive declare)."""
+        assert self._channel is not None
+        q = await self._channel.declare_queue(DLQ, durable=True, passive=True)
+        return {"queue": DLQ, "depth": q.declaration_result.message_count}
+
+    async def peek_dlq(self, limit: int = 20) -> list[dict]:
+        """Read up to `limit` parked messages WITHOUT consuming them: get each, then requeue it.
+        A peek, not a drain — the messages stay in the DLQ for the replay."""
+        assert self._queue is not None and self._channel is not None
+        dlq = await self._channel.get_queue(DLQ)
+        out: list[dict] = []
+        for _ in range(limit):
+            msg = await dlq.get(no_ack=False, fail=False)
+            if msg is None:
+                break
+            try:
+                out.append({"routingKey": msg.routing_key, "body": json.loads(msg.body)})
+            except Exception:  # noqa: BLE001 — a malformed parked message still shows raw
+                raw = msg.body.decode("utf-8", "replace")
+                out.append({"routingKey": msg.routing_key, "body": raw})
+            await msg.nack(requeue=True)  # put it back — this is a peek
+        return out
+
+    async def replay_dlq(self, limit: int = 20) -> int:
+        """Re-publish parked messages to the main exchange (keeping their routing key) and ack them
+        off the DLQ. Use after the dependency is healthy again. Returns how many were replayed."""
+        assert self._channel is not None and self._exchange is not None
+        dlq = await self._channel.get_queue(DLQ)
+        replayed = 0
+        for _ in range(limit):
+            msg = await dlq.get(no_ack=False, fail=False)
+            if msg is None:
+                break
+            await self._exchange.publish(
+                aio_pika.Message(body=msg.body, delivery_mode=aio_pika.DeliveryMode.PERSISTENT,
+                                 content_type="application/json"),
+                routing_key=msg.routing_key or "appointment.at_risk",
+            )
+            await msg.ack()
+            replayed += 1
+        log.info("broker.dlq_replayed", count=replayed)
+        return replayed
+
     async def close(self) -> None:
         if self._conn is not None:
             await self._conn.close()

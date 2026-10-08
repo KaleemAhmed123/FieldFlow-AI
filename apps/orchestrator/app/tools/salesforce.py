@@ -26,11 +26,24 @@ class FakeSalesforce:
     """In-memory demo org. One appointment links to a customer, asset and technician."""
 
     def __init__(self) -> None:
+        # Step 7b: flip this (via /sim/fault) to simulate Salesforce being down — every read then
+        # raises, the consumer handler fails, and the message dead-letters to events.dlq.
+        self.down: bool = False
         self._appointments: dict[str, dict] = {
             "SA-19281": {
                 "appointmentId": "SA-19281",
                 "customerId": "CON-1",
                 "assetId": "AST-1",
+                "resourceId": "SR-1",
+                "slaWindowMinutes": 120,
+                "caseState": "OPEN",
+            },
+            # Out-of-warranty appointment (Step 6): fire against this to drive the PAID commerce
+            # flow — the asset's warranty is expired, so a part is chargeable (OQ2).
+            "SA-OOW": {
+                "appointmentId": "SA-OOW",
+                "customerId": "CON-1",
+                "assetId": "AST-OOW",
                 "resourceId": "SR-1",
                 "slaWindowMinutes": 120,
                 "caseState": "OPEN",
@@ -41,24 +54,33 @@ class FakeSalesforce:
         }
         self._assets: dict[str, dict] = {
             "AST-1": {"model": "Daikin Inverter AC XYZ-492", "warranty": "active"},
+            "AST-OOW": {"model": "Daikin Inverter AC XYZ-492", "warranty": "expired"},
         }
         self._technicians: dict[str, dict] = {
             "SR-1": {"name": "Rahul Kumar", "skills": ["daikin-inverter"], "territory": "Noida"},
         }
 
+    def _guard(self) -> None:
+        if self.down:
+            raise RuntimeError("salesforce unavailable")  # Step 7b: → handler fails → DLQ
+
     def get_appointment(self, appointment_id: str) -> dict | None:
+        self._guard()
         appt = self._appointments.get(appointment_id)
         return dict(appt) if appt else None
 
     def get_customer(self, customer_id: str) -> dict | None:
+        self._guard()
         cust = self._customers.get(customer_id)
         return dict(cust) if cust else None
 
     def get_asset(self, asset_id: str) -> dict | None:
+        self._guard()
         asset = self._assets.get(asset_id)
         return dict(asset) if asset else None
 
     def get_technician(self, resource_id: str) -> dict | None:
+        self._guard()
         tech = self._technicians.get(resource_id)
         return dict(tech) if tech else None
 

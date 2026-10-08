@@ -44,6 +44,18 @@ async def list_tools(request: Request) -> dict:
     }
 
 
+@router.get("/dlq")
+async def dlq(request: Request) -> dict:
+    """Read-only peek at the dead-letter queue (Step 7b): how many messages are parked + their
+    bodies. A failed event (e.g. Salesforce down) lands here instead of being lost; /sim/dlq/replay
+    requeues them after recovery. Needs RabbitMQ — returns unavailable if the broker is down."""
+    broker = request.app.state.broker
+    if broker is None:
+        return {"available": False, "detail": "RabbitMQ unavailable — run `make up` first."}
+    stats = await broker.dlq_stats()
+    return {"available": True, **stats, "messages": await broker.peek_dlq()}
+
+
 def _view(c: Case) -> dict:
     return {
         "correlationId": c.correlation_id,
