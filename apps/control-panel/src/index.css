@@ -1,7 +1,98 @@
+@import url("https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600;700&display=swap");
+
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
 
-body {
-  @apply bg-slate-50 text-slate-900;
+/* ----------------------------------------------------------------------------
+   THEME TOKENS — the whole palette lives here. Edit these to re-skin/re-light.
+   Values are HSL channels (no hsl() wrapper) so Tailwind can apply opacity.
+   :root = light. [data-theme="dark"] = dark (the default; set on <html> by the
+   ThemeProvider). Nothing else in the app hardcodes a color.
+---------------------------------------------------------------------------- */
+:root {
+  --bg: 40 24% 97%;
+  --surface: 0 0% 100%;
+  --surface-2: 40 16% 95%;
+  --overlay: 0 0% 100%;
+  --border: 38 12% 86%;
+  --fg: 222 24% 14%;
+  --muted: 220 10% 40%;
+  --faint: 220 10% 56%;
+  --accent: 162 76% 30%;
+  --accent-fg: 0 0% 100%;
+  --ok: 150 58% 34%;
+  --warn: 32 90% 42%;
+  --risk: 0 68% 48%;
+  --info: 205 80% 40%;
+  --shadow: 220 40% 20%;
+}
+
+:root[data-theme="dark"] {
+  --bg: 222 22% 7%;
+  --surface: 222 20% 10%;
+  --surface-2: 222 16% 13%;
+  --overlay: 222 22% 11%;
+  --border: 220 14% 20%;
+  --fg: 210 22% 92%;
+  --muted: 215 14% 62%;
+  --faint: 216 12% 46%;
+  --accent: 158 82% 46%;
+  --accent-fg: 222 40% 6%;
+  --ok: 150 66% 48%;
+  --warn: 38 92% 56%;
+  --risk: 2 78% 62%;
+  --info: 199 88% 58%;
+  --shadow: 0 0% 0%;
+}
+
+@layer base {
+  * {
+    @apply border-border;
+  }
+  html {
+    color-scheme: light;
+  }
+  html[data-theme="dark"] {
+    color-scheme: dark;
+  }
+  body {
+    @apply bg-bg text-fg font-sans antialiased;
+    font-feature-settings: "cv02", "cv03", "cv04", "ss01";
+  }
+  /* terminal-style scrollbars */
+  ::-webkit-scrollbar {
+    width: 10px;
+    height: 10px;
+  }
+  ::-webkit-scrollbar-thumb {
+    @apply rounded bg-border;
+  }
+  ::-webkit-scrollbar-thumb:hover {
+    @apply bg-faint;
+  }
+  ::selection {
+    background: hsl(var(--accent) / 0.28);
+  }
+}
+
+@layer components {
+  /* subtle dotted "terminal grid" backdrop, token-driven */
+  .bg-grid {
+    background-image: radial-gradient(hsl(var(--fg) / 0.04) 1px, transparent 1px);
+    background-size: 22px 22px;
+  }
+  .hairline {
+    @apply border border-border;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.001ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.001ms !important;
+  }
 }
