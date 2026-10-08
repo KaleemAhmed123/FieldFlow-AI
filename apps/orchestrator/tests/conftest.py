@@ -2,16 +2,22 @@
 
 from __future__ import annotations
 
+from pathlib import Path
+
 import pytest
 from app.db.models import Base
 from app.graph.build import build_graph
 from app.graph.checkpointer import make_checkpointer
+from app.rag.ingest import ingest_dir
+from app.rag.store import FakeKnowledgeStore
 from app.tools.inventory import FakeInventory
 from app.tools.registry import build_toolbox
 from app.tools.salesforce import FakeSalesforce
 from app.tools.vonage import FakeVonage
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 from sqlalchemy.pool import StaticPool
+
+CORPUS = Path(__file__).resolve().parent.parent / "app" / "rag" / "corpus"
 
 
 @pytest.fixture
@@ -49,6 +55,14 @@ def toolbox(salesforce, inventory):
 
 
 @pytest.fixture
-def graph(toolbox, vonage):
-    """Compiled graph over the Toolbox + Vonage, with a per-test checkpointer."""
-    return build_graph(toolbox, vonage, checkpointer=make_checkpointer())
+def knowledge() -> FakeKnowledgeStore:
+    """In-memory knowledge store, ingested from the generated corpus (deterministic embedder)."""
+    store = FakeKnowledgeStore()
+    ingest_dir(store, CORPUS)
+    return store
+
+
+@pytest.fixture
+def graph(toolbox, vonage, knowledge):
+    """Compiled graph over the Toolbox + Vonage + knowledge store, with a per-test checkpointer."""
+    return build_graph(toolbox, vonage, knowledge, checkpointer=make_checkpointer())
