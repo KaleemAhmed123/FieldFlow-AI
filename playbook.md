@@ -469,6 +469,84 @@ Explanation in the same change when we ship. Ask before editing any context/** d
 already-approved webhook-scope note.
 ```
 
+**Resume Step 8 (control panel) — foundation already built, GREEN checkpoint**
+```
+Continue FieldFlow. Working dir C:\Users\hp\Desktop\RCS-VONAGE-POC. Read in order: CLAUDE.md (HARD
+rules: plain teaching style, plan-first, WAIT for my go on open questions, surface my action items +
+junior delegation, end every reply with What I achieved / What I need from you / Next steps);
+docs/specs/field-service-recovery/handoff-fieldflow.md (LATEST = session 5); build-step-8.md (THE
+plan — §3 answered OQs, §4 Plan, §5 Tasks + the Resume notes); playbook.md §9 (how to run the panel).
+
+State: Step 8 foundation is built and GREEN. From apps/control-panel: `pnpm install` then
+`pnpm typecheck` + `pnpm build` pass; `pnpm run types` regenerates the contract types. Done: pnpm
+deps, token-driven theme (dark default + light, one CSS-var block), fonts, `@/` alias, lib/cn.ts, and
+the GENERATED contract.gen.ts. KEEP apps/control-panel/pnpm-workspace.yaml (esbuild build-script
+allowlist) or pnpm install errors. The old App.tsx + api.ts are still the live app — don't delete
+until the new shell lands.
+
+Task = finish Step 8 per build-step-8.md §5 (tasks 2-8), the house aesthetic is a dark minimalist
+"hacker vibe", comprehensive + component-rich (do NOT ponytail components away; ponytail still governs
+clean code). Build order: finish the data layer (api.ts for every endpoint, hand-typed trace.ts for
+the decision-trace shape in the Resume notes, metrics.ts, fixtures.ts + VITE_USE_FIXTURES flag,
+TanStack Query hooks + useLiveCases polling seam, QueryClient in main.tsx) → shadcn ui/ primitives +
+Layout shell → CaseList + the HERO CaseDetail decision trace (reason[], knowledgeSources[],
+toolsUsed[], confidenceBreakdown, policyResult, removed[]) + RcsCardPreview + StatusTimeline →
+ApprovalActions (/sim/approve) → FailureDeck + ToolsSurface → MetricsStrip. Endpoints + the one story
+(AI proposes → policy decides → human approves risk → RCS is the control plane) are in build-step-8 +
+handoff. Keep the backend's 70 tests green (don't touch backend; SSE stays deferred). Update
+playbook.md §9 + the build-step-8 §7 Explanation when it ships.
+```
+
+**Build Step 8 (control panel — the demo UI partners will see) — plan-first**
+```
+Continue FieldFlow. Working dir C:\Users\hp\Desktop\RCS-VONAGE-POC. Read in order: CLAUDE.md (HARD
+rules: plain teaching style, plan-first, WAIT for my go on every open question, surface my action
+items + junior delegation, end every reply with What I achieved / What I need from you / Next steps;
+playbook.md is the command home; spec-driven under docs/specs/field-service-recovery/ — write
+build-step-8.md sections 1-5 before any code); docs/specs/field-service-recovery/handoff-fieldflow.md
+(LATEST block first); scaffold.md §2 (target repo layout) + §6 (build order #8 = "Control panel
+richness + Grafana dashboards"); playbook.md §2/§3/§3e/§3f/§5 (every endpoint + demo flow).
+
+State: the BACKEND is done and fully offline-green — from apps/orchestrator: `uv run pytest -q` → 70
+passed, `uv run ruff check .` clean, `uv run python -c "import app.main"` OK (dev deps:
+`uv sync --extra dev`). Steps shipped: Spine, 1 (policy+graph+NFR-4/5/6), 2 (Toolbox/MCP surface), §3
+(reasons/archetypes), 4 (RAG), 5 (LLM proposer + evidence-weighted confidence), 6 (commerce+Razorpay),
+9 Razorpay gateway, 9b Vonage send+webhooks, 7 failure demos. The ONE story the UI must make obvious:
+**AI proposes → deterministic policy decides → a human approves risk → RCS is the customer control
+plane.** The decision trace ("show your work": reason[], knowledgeSources[], toolsUsed[], confidence
+breakdown, policyResult, removed[]) is the HERO of the panel.
+
+Task = Step 8: build the React control panel in apps/control-panel/ (React + Vite + TS per scaffold
+§2; today the panel POLLS the API). I want it COMPREHENSIVE, component-rich and PREMIUM, with a
+minimalist "hacker vibe" aesthetic (dark, terminal/monospace accents, restrained palette, crisp
+density, subtle motion) — this is what we demo to the Vonage partners, so use all the design skills
+(frontend-design, ui-ux-pro-max, minimalist-ui, enterprise-ux for the dense operator layout, shadcn
+for components, dataviz for the metrics/confidence charts, advanced-frontend-architecture for state/
+data-fetching). Richness here is DELIBERATE — do NOT ponytail components away; ponytail still governs
+clean code, no dead abstractions. Views to cover (confirm scope with me): a live case list + a case
+detail with the full decision trace, the RCS card preview (carousel + "Approve & Pay"), the human-
+approval and quote-approval actions, the live SLA/status timeline, the /tools surface (reads vs
+actions), a failure-demo control deck (fire at-risk by reason, customer-reply, payment,
+delivery-status→SMS fallback, fault toggle, DLQ peek + replay), and a metrics strip from /metrics.
+
+Endpoints to consume (all live now): GET /cases, GET /cases/{id} (status, version, context,
+decisionTrace, sentCard), GET /tools, GET /dlq, GET /metrics (Prometheus text), GET /health; POST
+/sim/appointment-at-risk (reason knob), /sim/customer-reply, /sim/approve, /sim/payment,
+/sim/delivery-status, /sim/fault, /sim/dlq/replay. CORS origin is http://localhost:5173. Types come
+from packages/contract (generate/mirror TS types from the Pydantic models — don't hand-duplicate).
+
+House rules for this step: PLAN FIRST. Restate the task, then raise the open questions and WAIT for my
+answers before any code — at minimum: (1) component approach (shadcn/Tailwind vs hand-rolled); (2)
+live-feel (keep polling vs add SSE/WebSocket) — backend is poll today; (3) v1 view scope (which of the
+above ship first); (4) is Grafana in scope for Step 8 or deferred (a metrics strip in-panel may be
+enough for the demo); (5) mock fixtures vs live backend during UI dev. Give your recommendation for
+each. Keep the backend's 70 tests green (don't change backend behavior just to suit the UI without
+telling me). Surface my action items (node/pnpm versions, running the panel + the API together, any
+design assets/brand). Spec-driven: write docs/specs/field-service-recovery/build-step-8.md (sections
+1-5) alongside, update playbook.md (how to run the panel) in the same change, and add the
+Explanation when it ships.
+```
+
 **Start the next build step**
 ```
 Continue FieldFlow. Read CLAUDE.md + docs/specs/field-service-recovery/context/00-overview.md +
@@ -526,3 +604,30 @@ Where do we stand? What's built vs fake, is anything live (DB/queue/keys), and w
 Run make test and make lint, show the real output, then give the post-implementation walkthrough
 (what changed, why, how it flows, files, decisions, verification, edge cases).
 ```
+
+---
+
+## 9. Run the control panel (Step 8 — in progress)
+
+*The React + Vite + TypeScript operator UI the Vonage partners see. Build with **pnpm**. Foundation
+is built + GREEN; views are being added — see [`docs/specs/field-service-recovery/build-step-8.md`](docs/specs/field-service-recovery/build-step-8.md).*
+
+```bash
+cd apps/control-panel
+pnpm install            # first time. KEEP pnpm-workspace.yaml — it allowlists esbuild's build
+                        # script; without it pnpm errors ERR_PNPM_IGNORED_BUILDS and Vite won't run.
+pnpm dev                # Vite dev server on http://localhost:5173 (backend CORS already allows it)
+pnpm typecheck          # tsc --noEmit — should be clean
+pnpm build              # production build (tsc -b && vite build)
+pnpm run types          # regenerate TS types from packages/contract/schema/*.json (after make schema)
+```
+
+- **Run the panel + the API together:** `make dev` (orchestrator on :8000; needs a queue for the
+  `/sim/*` demos — CloudAMQP in `.env` or `make up`) **and** `pnpm dev` here (panel on :5173). Point
+  the panel elsewhere with `VITE_API_URL` in `apps/control-panel/.env`.
+- **No backend needed for UI work:** a `VITE_USE_FIXTURES` flag (coming with the data layer) serves
+  captured sample responses so every view — incl. paused/approval/failure — renders with no queue.
+- **Theme:** dark by default, light is a full peer; the whole palette is CSS-variable tokens in
+  `src/index.css` (Tailwind maps semantic names in `tailwind.config.js`). Re-skin = edit that one
+  block. A persisted dark/light toggle lands with the shell.
+- `make panel` (repo root) is the shortcut for `pnpm dev` in this folder.

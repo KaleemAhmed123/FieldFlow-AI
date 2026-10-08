@@ -1,6 +1,76 @@
-# Handoff: FieldFlow AI POC — continue the build (Step 4 live-verified; Step 5 decided, next to build)
+# Handoff: FieldFlow AI POC — continue the build
 
-## LATEST — 2026-10-08 (session 3): read this first
+## LATEST — 2026-10-09 (session 5): read this first
+
+- **Step 8 (control panel) is IN PROGRESS — foundation built, GREEN checkpoint, paused mid-build so
+  the user could switch accounts (weekly limit).** No work lost; everything is on disk + committed.
+- **What's done (apps/control-panel/):** React+Vite+TS panel's **foundation** — deps installed with
+  **pnpm**, a **fully token-driven theme** (dark default + light, one CSS-var block in
+  `src/index.css`, Tailwind mapped to semantic tokens in `tailwind.config.js`), fonts (IBM Plex Sans
+  + JetBrains Mono), `@/` import alias, `src/lib/cn.ts`, and the **generated** contract types
+  (`scripts/gen-types.mjs` → `src/lib/contract.gen.ts` + `src/lib/contract/*.ts`, run via
+  `pnpm run types`). `pnpm typecheck` + `pnpm build` both pass.
+- **What's NOT done yet:** the data layer (`api.ts` for all endpoints, hand-typed `trace.ts`,
+  `metrics.ts` Prometheus parser, `fixtures.ts` + `VITE_USE_FIXTURES` flag, TanStack Query hooks,
+  QueryClient in `main.tsx`), the shadcn `ui/` primitives, the `Layout` shell, and all views
+  (CaseList, **CaseDetail decision-trace hero**, RcsCardPreview, StatusTimeline, ApprovalActions,
+  FailureDeck, ToolsSurface, MetricsStrip). The **old** `App.tsx`/`api.ts` are still the live app
+  (untouched) so the build stays coherent — replace them when the new shell lands.
+- **Decisions locked this session (OQ1–Q5 in [`build-step-8.md`](build-step-8.md) §3):** Tailwind +
+  shadcn primitives we own · **polling now** behind a `useLiveCases` seam (**real SSE deferred** —
+  needs a backend broadcast bus that would risk the 70 green tests) · ship **all** views A→B→C ·
+  **in-panel metrics strip, Grafana deferred** · **fixtures + live flag** for UI dev · pnpm · theme
+  fully manageable (dark+light).
+- **To resume:** read [`build-step-8.md`](build-step-8.md) — §4 Plan, §5 Tasks + the **Resume
+  notes** (exact decision-trace shape, canonical statuses, the `/cases`-has-full-trace shortcut, and
+  the **pnpm esbuild allowlist** in `apps/control-panel/pnpm-workspace.yaml` — keep that file or
+  `pnpm install` fails). A ready continuation prompt is in [`playbook.md`](../../../playbook.md) §8
+  ("Resume Step 8").
+- **Gate reminder:** backend was NOT touched → still 70 green. Don't add SSE/websocket or change any
+  backend behaviour for the UI without telling the user first.
+
+---
+
+## LATEST — 2026-10-08 (session 4): read this first
+
+- **Step 6 (Commerce + Razorpay) SHIPPED mock-first.** Price-book authority (LLM proposes *which
+  part*, the book sets the amount), `FakeRazorpay` behind a `PaymentGateway` seam, flow
+  quote → **Approve & Pay** (one RCS tap) → capture → close. **Two-layer no-double-charge:**
+  idempotent gateway capture + envelope dedup on the payment `eventId`. Money is **integer paise**.
+  High-value quotes (≥ ₹5,000, env `COMMERCE_HIGH_VALUE_PAISE`) route to a human via `/sim/approve`.
+  Chargeable = chosen option needs a part AND (asset out of warranty OR `reason=additional_fault_found`);
+  demo via `reason=additional_fault_found` or `appointmentId=SA-OOW`. Full detail:
+  [`build-step-6.md`](build-step-6.md).
+- **Step 9 Razorpay BUILT + offline-tested (live fire gated).** Real `RazorpayGateway` +
+  `build_gateway(settings)` factory (blank keys → `FakeRazorpay`; a **non-`rzp_test_` key aborts the
+  boot**). Confirmation is by **polling** `payment_link.fetch` in `settle_payment` (no Razorpay
+  webhook). The SDK client is **injected** → **no `razorpay` dep added yet** (added only at the live
+  fire). Detail: [`build-step-9.md`](build-step-9.md).
+- **WEBHOOK DECISION (important, corrected this session):** "no webhooks in the POC" was
+  **Razorpay-only** (Razorpay stays a `/sim/payment` poll). **Vonage RCS gets REAL inbound + status
+  webhooks** — the user wants it real + robust to impress partners. `/sim/*` stays as the **offline
+  twin** for tests/demos. Docs updated (context/00, scaffold framing, playbook).
+- **Step 9b (real Vonage RCS) PLANNED, not built — this is the NEXT step.** Real **send** (carousel +
+  "Approve & Pay" open-url) **and real `/webhooks/inbound` + `/webhooks/status`** (JWT verify, dedup
+  by `message_uuid`, return 200). Full plan + the RCS send/webhook reference:
+  [`build-step-9b.md`](build-step-9b.md). **A ready-to-paste continuation prompt for a fresh chat is
+  in [`playbook.md`](../../../playbook.md) §8** ("Build Step 9b…").
+- **Step 9c (real Salesforce MCP) — offload sheet written:** [`salesforce-handoff.md`](salesforce-handoff.md).
+  The user builds custom **Apex REST** APIs; recommended path = point our Toolbox at those endpoints
+  first (I write the Python), wrap as a real MCP server later ("Headless 360"). User has a DE org, new
+  to Field Service.
+- **Tests/gates:** from `apps/orchestrator`: `uv run pytest -q` → **58 passed**; `uv run ruff check .`
+  clean; `uv run python -c "import app.main"` OK. Dev deps: `uv sync --extra dev`. Everything offline
+  (fakes; no keys, no network).
+- **User action items pending:** Vonage creds (`VONAGE_API_KEY/SECRET`, `VONAGE_APPLICATION_ID`,
+  private key, `VONAGE_RCS_SENDER`) "added soon" + an ngrok tunnel + the 2 webhook URLs on the Vonage
+  Application + a test Android (Google Messages) number. Razorpay **test** keys are already in `.env`
+  (live fire is far off). **$100 Vonage credit — spend sensibly** (one send per manual demo).
+- Housekeeping: `temp.txt` at root is the user's scratch notes — **leave it**.
+
+---
+
+## 2026-10-08 (session 3)
 
 - **Step 5 is SHIPPED + LIVE-VERIFIED.** New `app/llm/` package: the `Proposer` ladder (Groq →
   Gemini → deterministic floor, lazy-imported SDKs), evidence-weighted `confidence.py` (5 factors,
