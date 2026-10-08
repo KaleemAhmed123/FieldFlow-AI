@@ -1,0 +1,346 @@
+{
+  "version": "1.0",
+  "note": "Fictional but realistic field-service catalog. Single source of truth for inventory, Salesforce assets, and the RAG corpus. All brands/models invented. Money is integer paise.",
+  "skills": ["inverter-ac", "general-hvac", "refrigeration", "laundry", "water-treatment", "heating", "kitchen-appliance"],
+  "models": [
+    {
+      "modelId": "XYZ-492",
+      "brand": "Frostline",
+      "name": "Frostline Inverter Split AC XYZ-492",
+      "category": "air-conditioner",
+      "specs": { "type": "split inverter AC", "capacityTon": 1.5, "refrigerant": "R32", "powerW": 1480, "starRating": 5 },
+      "warrantyMonths": 60,
+      "warrantyCoverage": "Parts and labour on the inverter control board (PCB) and compressor. Consumables excluded.",
+      "requiresSkill": "inverter-ac",
+      "parts": [
+        { "partNo": "PCB-492", "name": "Inverter control board assembly", "kind": "board", "pricePaise": 480000, "warrantyCovered": true, "requiresSkill": "inverter-ac", "scarce": true },
+        { "partNo": "CAP-492", "name": "Compressor capacitor", "kind": "board", "pricePaise": 320000, "warrantyCovered": true, "requiresSkill": "inverter-ac", "scarce": true },
+        { "partNo": "SENSOR-11", "name": "Outdoor temperature sensor", "kind": "sensor", "pricePaise": 120000, "warrantyCovered": true, "requiresSkill": "general-hvac", "scarce": false },
+        { "partNo": "FILTER-100", "name": "Consumable air filter", "kind": "consumable", "pricePaise": 45000, "warrantyCovered": false, "requiresSkill": "general-hvac", "scarce": false },
+        { "partNo": "COMP-492", "name": "Rotary inverter compressor", "kind": "compressor", "pricePaise": 1850000, "warrantyCovered": true, "requiresSkill": "inverter-ac", "scarce": false },
+        { "partNo": "FAN-492", "name": "Outdoor condenser fan motor", "kind": "motor", "pricePaise": 260000, "warrantyCovered": false, "requiresSkill": "general-hvac", "scarce": false },
+        { "partNo": "VALV-492", "name": "Electronic expansion valve", "kind": "valve", "pricePaise": 190000, "warrantyCovered": false, "requiresSkill": "inverter-ac", "scarce": false }
+      ],
+      "faultCodes": [
+        { "code": "F3", "meaning": "Inverter control board failure; compressor will not start", "likelyPart": "PCB-492", "needsPart": true, "skill": "inverter-ac", "safetyRisk": false },
+        { "code": "E1", "meaning": "High-voltage capacitor fault; discharge before service", "likelyPart": "CAP-492", "needsPart": true, "skill": "inverter-ac", "safetyRisk": true },
+        { "code": "F6", "meaning": "Outdoor temperature sensor open circuit", "likelyPart": "SENSOR-11", "needsPart": true, "skill": "general-hvac", "safetyRisk": false },
+        { "code": "U4", "meaning": "Indoor/outdoor communication error; inspect harness first", "likelyPart": null, "needsPart": false, "skill": "general-hvac", "safetyRisk": false },
+        { "code": "P4", "meaning": "Compressor over-current trip", "likelyPart": "COMP-492", "needsPart": true, "skill": "inverter-ac", "safetyRisk": false }
+      ]
+    },
+    {
+      "modelId": "WA-220",
+      "brand": "Frostline",
+      "name": "Frostline Window AC WA-220",
+      "category": "air-conditioner",
+      "specs": { "type": "window AC", "capacityTon": 1.0, "refrigerant": "R32", "powerW": 1100, "starRating": 3 },
+      "warrantyMonths": 24,
+      "warrantyCoverage": "Parts and labour on the compressor and PCB. Consumables and cosmetic parts excluded.",
+      "requiresSkill": "general-hvac",
+      "parts": [
+        { "partNo": "PCB-220", "name": "Window AC control board", "kind": "board", "pricePaise": 230000, "warrantyCovered": true, "requiresSkill": "general-hvac", "scarce": false },
+        { "partNo": "COMP-220", "name": "Reciprocating compressor", "kind": "compressor", "pricePaise": 980000, "warrantyCovered": true, "requiresSkill": "general-hvac", "scarce": false },
+        { "partNo": "FAN-220", "name": "Blower fan motor", "kind": "motor", "pricePaise": 175000, "warrantyCovered": false, "requiresSkill": "general-hvac", "scarce": false },
+        { "partNo": "THRM-220", "name": "Rotary thermostat", "kind": "thermostat", "pricePaise": 68000, "warrantyCovered": false, "requiresSkill": "general-hvac", "scarce": false },
+        { "partNo": "FILTER-220", "name": "Washable mesh filter", "kind": "consumable", "pricePaise": 32000, "warrantyCovered": false, "requiresSkill": "general-hvac", "scarce": false },
+        { "partNo": "CAP-220", "name": "Compressor start capacitor", "kind": "board", "pricePaise": 54000, "warrantyCovered": true, "requiresSkill": "general-hvac", "scarce": true }
+      ],
+      "faultCodes": [
+        { "code": "H1", "meaning": "Compressor start capacitor weak; unit hums, no cooling", "likelyPart": "CAP-220", "needsPart": true, "skill": "general-hvac", "safetyRisk": false },
+        { "code": "H3", "meaning": "Control board relay failure", "likelyPart": "PCB-220", "needsPart": true, "skill": "general-hvac", "safetyRisk": false },
+        { "code": "H5", "meaning": "Thermostat stuck; no temperature regulation", "likelyPart": "THRM-220", "needsPart": true, "skill": "general-hvac", "safetyRisk": false },
+        { "code": "H9", "meaning": "Blocked filter; weak airflow (no part needed)", "likelyPart": null, "needsPart": false, "skill": "general-hvac", "safetyRisk": false }
+      ]
+    },
+    {
+      "modelId": "AP-RO-X2",
+      "brand": "AquaPure",
+      "name": "AquaPure RO Purifier X2",
+      "category": "water-purifier",
+      "specs": { "type": "reverse-osmosis purifier", "capacityL": 8, "stages": 7, "powerW": 60 },
+      "warrantyMonths": 12,
+      "warrantyCoverage": "Parts and labour on the RO membrane and booster pump for 12 months. Filters are consumables.",
+      "requiresSkill": "water-treatment",
+      "parts": [
+        { "partNo": "MEM-X2", "name": "RO membrane 80 GPD", "kind": "membrane", "pricePaise": 240000, "warrantyCovered": true, "requiresSkill": "water-treatment", "scarce": true },
+        { "partNo": "PUMP-X2", "name": "Booster pump 100 psi", "kind": "pump", "pricePaise": 310000, "warrantyCovered": true, "requiresSkill": "water-treatment", "scarce": false },
+        { "partNo": "SV-X2", "name": "Solenoid inlet valve", "kind": "valve", "pricePaise": 72000, "warrantyCovered": false, "requiresSkill": "water-treatment", "scarce": false },
+        { "partNo": "PCB-X2", "name": "Purifier control PCB", "kind": "board", "pricePaise": 140000, "warrantyCovered": true, "requiresSkill": "water-treatment", "scarce": false },
+        { "partNo": "FILT-SED", "name": "Sediment pre-filter", "kind": "consumable", "pricePaise": 28000, "warrantyCovered": false, "requiresSkill": "water-treatment", "scarce": false },
+        { "partNo": "FILT-CARB", "name": "Carbon post-filter", "kind": "consumable", "pricePaise": 34000, "warrantyCovered": false, "requiresSkill": "water-treatment", "scarce": false }
+      ],
+      "faultCodes": [
+        { "code": "W1", "meaning": "Low purified water flow; RO membrane choked", "likelyPart": "MEM-X2", "needsPart": true, "skill": "water-treatment", "safetyRisk": false },
+        { "code": "W2", "meaning": "No water draw; booster pump not building pressure", "likelyPart": "PUMP-X2", "needsPart": true, "skill": "water-treatment", "safetyRisk": false },
+        { "code": "W4", "meaning": "Continuous drain; solenoid valve stuck open", "likelyPart": "SV-X2", "needsPart": true, "skill": "water-treatment", "safetyRisk": false },
+        { "code": "W7", "meaning": "Filter-change reminder (consumable service, no covered part)", "likelyPart": null, "needsPart": false, "skill": "water-treatment", "safetyRisk": false }
+      ]
+    },
+    {
+      "modelId": "AP-UV-9",
+      "brand": "AquaPure",
+      "name": "AquaPure UV Max 9",
+      "category": "water-purifier",
+      "specs": { "type": "UV purifier", "capacityL": 7, "stages": 4, "powerW": 40 },
+      "warrantyMonths": 12,
+      "warrantyCoverage": "Parts and labour on the UV ballast and chamber for 12 months. UV lamp and filters are consumables.",
+      "requiresSkill": "water-treatment",
+      "parts": [
+        { "partNo": "UVB-9", "name": "UV electronic ballast", "kind": "board", "pricePaise": 96000, "warrantyCovered": true, "requiresSkill": "water-treatment", "scarce": false },
+        { "partNo": "UVL-9", "name": "UV lamp 11W", "kind": "consumable", "pricePaise": 52000, "warrantyCovered": false, "requiresSkill": "water-treatment", "scarce": false },
+        { "partNo": "CHAM-9", "name": "Quartz UV chamber", "kind": "mechanical", "pricePaise": 130000, "warrantyCovered": true, "requiresSkill": "water-treatment", "scarce": true },
+        { "partNo": "PUMP-9", "name": "Diaphragm pump", "kind": "pump", "pricePaise": 180000, "warrantyCovered": true, "requiresSkill": "water-treatment", "scarce": false },
+        { "partNo": "FLOW-9", "name": "Flow sensor", "kind": "sensor", "pricePaise": 46000, "warrantyCovered": false, "requiresSkill": "water-treatment", "scarce": false },
+        { "partNo": "FILT-9", "name": "Spun sediment filter", "kind": "consumable", "pricePaise": 24000, "warrantyCovered": false, "requiresSkill": "water-treatment", "scarce": false }
+      ],
+      "faultCodes": [
+        { "code": "UV1", "meaning": "UV fail alarm; ballast not driving the lamp", "likelyPart": "UVB-9", "needsPart": true, "skill": "water-treatment", "safetyRisk": false },
+        { "code": "UV3", "meaning": "Low UV dose; lamp aged (consumable)", "likelyPart": "UVL-9", "needsPart": true, "skill": "water-treatment", "safetyRisk": false },
+        { "code": "UV5", "meaning": "No flow detected; flow sensor or pump", "likelyPart": "PUMP-9", "needsPart": true, "skill": "water-treatment", "safetyRisk": false }
+      ]
+    },
+    {
+      "modelId": "DD-410",
+      "brand": "Glacio",
+      "name": "Glacio Double-Door Refrigerator DD-410",
+      "category": "refrigerator",
+      "specs": { "type": "frost-free double door", "capacityL": 410, "refrigerant": "R600a", "starRating": 3 },
+      "warrantyMonths": 120,
+      "warrantyCoverage": "Compressor covered 10 years; other parts and labour 12 months. Door gaskets and trays are consumables.",
+      "requiresSkill": "refrigeration",
+      "parts": [
+        { "partNo": "COMP-410", "name": "Hermetic compressor R600a", "kind": "compressor", "pricePaise": 1250000, "warrantyCovered": true, "requiresSkill": "refrigeration", "scarce": false },
+        { "partNo": "PCB-410", "name": "Inverter fridge control board", "kind": "board", "pricePaise": 320000, "warrantyCovered": true, "requiresSkill": "refrigeration", "scarce": true },
+        { "partNo": "FANE-410", "name": "Evaporator fan motor", "kind": "motor", "pricePaise": 145000, "warrantyCovered": false, "requiresSkill": "refrigeration", "scarce": false },
+        { "partNo": "DEFR-410", "name": "Defrost heater element", "kind": "heating-element", "pricePaise": 88000, "warrantyCovered": false, "requiresSkill": "refrigeration", "scarce": false },
+        { "partNo": "THRM-410", "name": "Defrost thermostat", "kind": "thermostat", "pricePaise": 42000, "warrantyCovered": false, "requiresSkill": "refrigeration", "scarce": false },
+        { "partNo": "GASK-410", "name": "Door gasket set", "kind": "consumable", "pricePaise": 60000, "warrantyCovered": false, "requiresSkill": "refrigeration", "scarce": false },
+        { "partNo": "SENS-410", "name": "Evaporator temperature sensor", "kind": "sensor", "pricePaise": 38000, "warrantyCovered": true, "requiresSkill": "refrigeration", "scarce": false }
+      ],
+      "faultCodes": [
+        { "code": "C1", "meaning": "No cooling; compressor not starting", "likelyPart": "COMP-410", "needsPart": true, "skill": "refrigeration", "safetyRisk": false },
+        { "code": "C2", "meaning": "Fridge control board failure", "likelyPart": "PCB-410", "needsPart": true, "skill": "refrigeration", "safetyRisk": false },
+        { "code": "C5", "meaning": "Heavy frost build-up; defrost heater open", "likelyPart": "DEFR-410", "needsPart": true, "skill": "refrigeration", "safetyRisk": false },
+        { "code": "C7", "meaning": "Warm fridge, cold freezer; evaporator fan stalled", "likelyPart": "FANE-410", "needsPart": true, "skill": "refrigeration", "safetyRisk": false },
+        { "code": "C9", "meaning": "Door-open alarm; gasket leak (consumable)", "likelyPart": "GASK-410", "needsPart": false, "skill": "refrigeration", "safetyRisk": false }
+      ]
+    },
+    {
+      "modelId": "SBS-620",
+      "brand": "Glacio",
+      "name": "Glacio Side-by-Side Refrigerator SBS-620",
+      "category": "refrigerator",
+      "specs": { "type": "side-by-side with water dispenser", "capacityL": 620, "refrigerant": "R600a", "starRating": 4 },
+      "warrantyMonths": 120,
+      "warrantyCoverage": "Compressor covered 10 years; other parts and labour 24 months. Water filter is a consumable.",
+      "requiresSkill": "refrigeration",
+      "parts": [
+        { "partNo": "COMP-620", "name": "Linear inverter compressor", "kind": "compressor", "pricePaise": 1680000, "warrantyCovered": true, "requiresSkill": "refrigeration", "scarce": false },
+        { "partNo": "PCB-620", "name": "Main control board", "kind": "board", "pricePaise": 390000, "warrantyCovered": true, "requiresSkill": "refrigeration", "scarce": false },
+        { "partNo": "DISP-620", "name": "Ice & water dispenser valve", "kind": "valve", "pricePaise": 150000, "warrantyCovered": false, "requiresSkill": "refrigeration", "scarce": false },
+        { "partNo": "FANC-620", "name": "Condenser fan motor", "kind": "motor", "pricePaise": 160000, "warrantyCovered": false, "requiresSkill": "refrigeration", "scarce": false },
+        { "partNo": "WFILT-620", "name": "Inline water filter", "kind": "consumable", "pricePaise": 70000, "warrantyCovered": false, "requiresSkill": "refrigeration", "scarce": false },
+        { "partNo": "SENS-620", "name": "Ambient humidity sensor", "kind": "sensor", "pricePaise": 44000, "warrantyCovered": true, "requiresSkill": "refrigeration", "scarce": false },
+        { "partNo": "HEAT-620", "name": "Dispenser anti-freeze heater", "kind": "heating-element", "pricePaise": 65000, "warrantyCovered": false, "requiresSkill": "refrigeration", "scarce": true }
+      ],
+      "faultCodes": [
+        { "code": "S1", "meaning": "Compressor fault; both compartments warm", "likelyPart": "COMP-620", "needsPart": true, "skill": "refrigeration", "safetyRisk": false },
+        { "code": "S3", "meaning": "Dispenser not dispensing water; valve stuck", "likelyPart": "DISP-620", "needsPart": true, "skill": "refrigeration", "safetyRisk": false },
+        { "code": "S6", "meaning": "Main board communication error", "likelyPart": "PCB-620", "needsPart": true, "skill": "refrigeration", "safetyRisk": false },
+        { "code": "S8", "meaning": "Dispenser chute frozen; heater open", "likelyPart": "HEAT-620", "needsPart": true, "skill": "refrigeration", "safetyRisk": false }
+      ]
+    },
+    {
+      "modelId": "FL-70",
+      "brand": "Vortex",
+      "name": "Vortex Front-Load Washer FL-70",
+      "category": "washing-machine",
+      "specs": { "type": "front-load washer", "capacityKg": 7.0, "maxRpm": 1200, "powerW": 2000 },
+      "warrantyMonths": 24,
+      "warrantyCoverage": "Motor covered 10 years; parts and labour 24 months. Hoses and detergent trays excluded.",
+      "requiresSkill": "laundry",
+      "parts": [
+        { "partNo": "MOT-70", "name": "BLDC drive motor", "kind": "motor", "pricePaise": 540000, "warrantyCovered": true, "requiresSkill": "laundry", "scarce": false },
+        { "partNo": "PCB-70", "name": "Washer main control board", "kind": "board", "pricePaise": 285000, "warrantyCovered": true, "requiresSkill": "laundry", "scarce": true },
+        { "partNo": "PUMP-70", "name": "Drain pump assembly", "kind": "pump", "pricePaise": 120000, "warrantyCovered": false, "requiresSkill": "laundry", "scarce": false },
+        { "partNo": "DOOR-70", "name": "Door lock interlock", "kind": "mechanical", "pricePaise": 78000, "warrantyCovered": false, "requiresSkill": "laundry", "scarce": false },
+        { "partNo": "BELT-70", "name": "Drive belt", "kind": "consumable", "pricePaise": 36000, "warrantyCovered": false, "requiresSkill": "laundry", "scarce": false },
+        { "partNo": "HEAT-70", "name": "Wash heater element", "kind": "heating-element", "pricePaise": 110000, "warrantyCovered": true, "requiresSkill": "laundry", "scarce": false }
+      ],
+      "faultCodes": [
+        { "code": "L1", "meaning": "Drum not spinning; drive motor fault", "likelyPart": "MOT-70", "needsPart": true, "skill": "laundry", "safetyRisk": false },
+        { "code": "L2", "meaning": "Will not drain; drain pump blocked or failed", "likelyPart": "PUMP-70", "needsPart": true, "skill": "laundry", "safetyRisk": false },
+        { "code": "L4", "meaning": "Door lock error; cycle won't start", "likelyPart": "DOOR-70", "needsPart": true, "skill": "laundry", "safetyRisk": false },
+        { "code": "L7", "meaning": "No hot wash; heater element open", "likelyPart": "HEAT-70", "needsPart": true, "skill": "laundry", "safetyRisk": true },
+        { "code": "L9", "meaning": "Control board unresponsive", "likelyPart": "PCB-70", "needsPart": true, "skill": "laundry", "safetyRisk": false }
+      ]
+    },
+    {
+      "modelId": "TL-65",
+      "brand": "Vortex",
+      "name": "Vortex Top-Load Washer TL-65",
+      "category": "washing-machine",
+      "specs": { "type": "top-load washer", "capacityKg": 6.5, "maxRpm": 740, "powerW": 360 },
+      "warrantyMonths": 24,
+      "warrantyCoverage": "Motor covered 5 years; parts and labour 24 months. Consumables excluded.",
+      "requiresSkill": "laundry",
+      "parts": [
+        { "partNo": "MOT-65", "name": "Universal wash motor", "kind": "motor", "pricePaise": 320000, "warrantyCovered": true, "requiresSkill": "laundry", "scarce": false },
+        { "partNo": "PCB-65", "name": "Timer control board", "kind": "board", "pricePaise": 150000, "warrantyCovered": true, "requiresSkill": "laundry", "scarce": false },
+        { "partNo": "VALV-65", "name": "Water inlet valve", "kind": "valve", "pricePaise": 62000, "warrantyCovered": false, "requiresSkill": "laundry", "scarce": false },
+        { "partNo": "LID-65", "name": "Lid switch", "kind": "sensor", "pricePaise": 40000, "warrantyCovered": false, "requiresSkill": "laundry", "scarce": false },
+        { "partNo": "GEAR-65", "name": "Gearbox / transmission", "kind": "mechanical", "pricePaise": 240000, "warrantyCovered": false, "requiresSkill": "laundry", "scarce": true },
+        { "partNo": "BELT-65", "name": "Pulley belt", "kind": "consumable", "pricePaise": 30000, "warrantyCovered": false, "requiresSkill": "laundry", "scarce": false }
+      ],
+      "faultCodes": [
+        { "code": "T1", "meaning": "No agitation; gearbox worn", "likelyPart": "GEAR-65", "needsPart": true, "skill": "laundry", "safetyRisk": false },
+        { "code": "T3", "meaning": "Not filling; inlet valve stuck", "likelyPart": "VALV-65", "needsPart": true, "skill": "laundry", "safetyRisk": false },
+        { "code": "T5", "meaning": "Won't start; lid switch open", "likelyPart": "LID-65", "needsPart": true, "skill": "laundry", "safetyRisk": false },
+        { "code": "T8", "meaning": "Timer board stuck mid-cycle", "likelyPart": "PCB-65", "needsPart": true, "skill": "laundry", "safetyRisk": false }
+      ]
+    },
+    {
+      "modelId": "MW-28",
+      "brand": "HeatWave",
+      "name": "HeatWave Convection Microwave MW-28",
+      "category": "microwave",
+      "specs": { "type": "convection microwave", "capacityL": 28, "powerW": 900 },
+      "warrantyMonths": 36,
+      "warrantyCoverage": "Magnetron covered 36 months; other parts and labour 12 months.",
+      "requiresSkill": "kitchen-appliance",
+      "parts": [
+        { "partNo": "MAG-28", "name": "Magnetron tube", "kind": "mechanical", "pricePaise": 210000, "warrantyCovered": true, "requiresSkill": "kitchen-appliance", "scarce": true },
+        { "partNo": "HVT-28", "name": "High-voltage transformer", "kind": "board", "pricePaise": 175000, "warrantyCovered": true, "requiresSkill": "kitchen-appliance", "scarce": false },
+        { "partNo": "PCB-28", "name": "Touch control board", "kind": "board", "pricePaise": 130000, "warrantyCovered": false, "requiresSkill": "kitchen-appliance", "scarce": false },
+        { "partNo": "DOOR-28", "name": "Door interlock switch set", "kind": "mechanical", "pricePaise": 58000, "warrantyCovered": false, "requiresSkill": "kitchen-appliance", "scarce": false },
+        { "partNo": "FANC-28", "name": "Convection fan motor", "kind": "motor", "pricePaise": 96000, "warrantyCovered": false, "requiresSkill": "kitchen-appliance", "scarce": false },
+        { "partNo": "HEAT-28", "name": "Convection heating element", "kind": "heating-element", "pricePaise": 84000, "warrantyCovered": false, "requiresSkill": "kitchen-appliance", "scarce": false }
+      ],
+      "faultCodes": [
+        { "code": "M1", "meaning": "No heating in microwave mode; magnetron failed", "likelyPart": "MAG-28", "needsPart": true, "skill": "kitchen-appliance", "safetyRisk": true },
+        { "code": "M2", "meaning": "Sparking / HV fault; transformer breakdown", "likelyPart": "HVT-28", "needsPart": true, "skill": "kitchen-appliance", "safetyRisk": true },
+        { "code": "M4", "meaning": "No convection heat; element open", "likelyPart": "HEAT-28", "needsPart": true, "skill": "kitchen-appliance", "safetyRisk": false },
+        { "code": "M6", "meaning": "Won't start; door interlock not engaging", "likelyPart": "DOOR-28", "needsPart": true, "skill": "kitchen-appliance", "safetyRisk": true }
+      ]
+    },
+    {
+      "modelId": "GZ-25",
+      "brand": "ThermaCore",
+      "name": "ThermaCore Storage Water Heater GZ-25",
+      "category": "water-heater",
+      "specs": { "type": "storage geyser", "capacityL": 25, "powerW": 2000 },
+      "warrantyMonths": 84,
+      "warrantyCoverage": "Inner tank covered 7 years; heating element and thermostat 24 months.",
+      "requiresSkill": "heating",
+      "parts": [
+        { "partNo": "ELEM-25", "name": "Heating element 2kW", "kind": "heating-element", "pricePaise": 92000, "warrantyCovered": true, "requiresSkill": "heating", "scarce": false },
+        { "partNo": "THRM-25", "name": "Adjustable thermostat", "kind": "thermostat", "pricePaise": 56000, "warrantyCovered": true, "requiresSkill": "heating", "scarce": false },
+        { "partNo": "TCO-25", "name": "Thermal cut-out safety switch", "kind": "sensor", "pricePaise": 38000, "warrantyCovered": true, "requiresSkill": "heating", "scarce": true },
+        { "partNo": "ANOD-25", "name": "Magnesium anode rod", "kind": "consumable", "pricePaise": 44000, "warrantyCovered": false, "requiresSkill": "heating", "scarce": false },
+        { "partNo": "GASK-25", "name": "Flange gasket", "kind": "consumable", "pricePaise": 26000, "warrantyCovered": false, "requiresSkill": "heating", "scarce": false },
+        { "partNo": "VALV-25", "name": "Pressure relief valve", "kind": "valve", "pricePaise": 48000, "warrantyCovered": false, "requiresSkill": "heating", "scarce": false }
+      ],
+      "faultCodes": [
+        { "code": "G1", "meaning": "No heating; element burnt out", "likelyPart": "ELEM-25", "needsPart": true, "skill": "heating", "safetyRisk": false },
+        { "code": "G2", "meaning": "Over-temperature trip; thermal cut-out open", "likelyPart": "TCO-25", "needsPart": true, "skill": "heating", "safetyRisk": true },
+        { "code": "G4", "meaning": "Water too hot/cold; thermostat drift", "likelyPart": "THRM-25", "needsPart": true, "skill": "heating", "safetyRisk": false },
+        { "code": "G6", "meaning": "Leak from relief valve; pressure fault", "likelyPart": "VALV-25", "needsPart": true, "skill": "heating", "safetyRisk": true }
+      ]
+    },
+    {
+      "modelId": "DW-14",
+      "brand": "Vortex",
+      "name": "Vortex Dishwasher DW-14",
+      "category": "dishwasher",
+      "specs": { "type": "free-standing dishwasher", "placeSettings": 14, "powerW": 1900 },
+      "warrantyMonths": 24,
+      "warrantyCoverage": "Parts and labour 24 months. Spray arms and seals are consumables.",
+      "requiresSkill": "kitchen-appliance",
+      "parts": [
+        { "partNo": "PUMP-14", "name": "Wash circulation pump", "kind": "pump", "pricePaise": 230000, "warrantyCovered": true, "requiresSkill": "kitchen-appliance", "scarce": false },
+        { "partNo": "PCB-14", "name": "Dishwasher control board", "kind": "board", "pricePaise": 170000, "warrantyCovered": true, "requiresSkill": "kitchen-appliance", "scarce": false },
+        { "partNo": "HEAT-14", "name": "Flow-through heater", "kind": "heating-element", "pricePaise": 140000, "warrantyCovered": true, "requiresSkill": "kitchen-appliance", "scarce": true },
+        { "partNo": "VALV-14", "name": "Water inlet valve", "kind": "valve", "pricePaise": 60000, "warrantyCovered": false, "requiresSkill": "kitchen-appliance", "scarce": false },
+        { "partNo": "DRN-14", "name": "Drain pump", "kind": "pump", "pricePaise": 85000, "warrantyCovered": false, "requiresSkill": "kitchen-appliance", "scarce": false },
+        { "partNo": "SEAL-14", "name": "Door seal", "kind": "consumable", "pricePaise": 38000, "warrantyCovered": false, "requiresSkill": "kitchen-appliance", "scarce": false }
+      ],
+      "faultCodes": [
+        { "code": "D1", "meaning": "Dishes cold; flow heater open", "likelyPart": "HEAT-14", "needsPart": true, "skill": "kitchen-appliance", "safetyRisk": false },
+        { "code": "D3", "meaning": "Poor wash; circulation pump weak", "likelyPart": "PUMP-14", "needsPart": true, "skill": "kitchen-appliance", "safetyRisk": false },
+        { "code": "D5", "meaning": "Not filling; inlet valve stuck", "likelyPart": "VALV-14", "needsPart": true, "skill": "kitchen-appliance", "safetyRisk": false },
+        { "code": "D8", "meaning": "Standing water; drain pump blocked", "likelyPart": "DRN-14", "needsPart": true, "skill": "kitchen-appliance", "safetyRisk": false }
+      ]
+    },
+    {
+      "modelId": "AC-500",
+      "brand": "AuraClean",
+      "name": "AuraClean Air Purifier AC-500",
+      "category": "air-purifier",
+      "specs": { "type": "HEPA air purifier", "cadr": 400, "powerW": 55 },
+      "warrantyMonths": 12,
+      "warrantyCoverage": "Parts and labour on the motor and PCB 12 months. HEPA and carbon filters are consumables.",
+      "requiresSkill": "general-hvac",
+      "parts": [
+        { "partNo": "MOT-500", "name": "Brushless blower motor", "kind": "motor", "pricePaise": 165000, "warrantyCovered": true, "requiresSkill": "general-hvac", "scarce": false },
+        { "partNo": "PCB-500", "name": "Air-quality control board", "kind": "board", "pricePaise": 110000, "warrantyCovered": true, "requiresSkill": "general-hvac", "scarce": false },
+        { "partNo": "PM-500", "name": "Laser PM2.5 sensor", "kind": "sensor", "pricePaise": 72000, "warrantyCovered": true, "requiresSkill": "general-hvac", "scarce": true },
+        { "partNo": "HEPA-500", "name": "True-HEPA filter", "kind": "consumable", "pricePaise": 90000, "warrantyCovered": false, "requiresSkill": "general-hvac", "scarce": false },
+        { "partNo": "CARB-500", "name": "Activated carbon filter", "kind": "consumable", "pricePaise": 55000, "warrantyCovered": false, "requiresSkill": "general-hvac", "scarce": false }
+      ],
+      "faultCodes": [
+        { "code": "A1", "meaning": "Fan not spinning; blower motor fault", "likelyPart": "MOT-500", "needsPart": true, "skill": "general-hvac", "safetyRisk": false },
+        { "code": "A3", "meaning": "Air-quality always red; PM sensor drift", "likelyPart": "PM-500", "needsPart": true, "skill": "general-hvac", "safetyRisk": false },
+        { "code": "A5", "meaning": "Filter-life alert (consumable, no covered part)", "likelyPart": null, "needsPart": false, "skill": "general-hvac", "safetyRisk": false }
+      ]
+    },
+    {
+      "modelId": "CH-90",
+      "brand": "VentMax",
+      "name": "VentMax Auto-Clean Chimney CH-90",
+      "category": "kitchen-chimney",
+      "specs": { "type": "auto-clean wall chimney", "suctionM3h": 1200, "widthCm": 90, "powerW": 180 },
+      "warrantyMonths": 60,
+      "warrantyCoverage": "Motor covered 5 years; other parts and labour 12 months.",
+      "requiresSkill": "kitchen-appliance",
+      "parts": [
+        { "partNo": "MOT-90", "name": "Suction blower motor", "kind": "motor", "pricePaise": 280000, "warrantyCovered": true, "requiresSkill": "kitchen-appliance", "scarce": false },
+        { "partNo": "PCB-90", "name": "Touch + gesture control board", "kind": "board", "pricePaise": 120000, "warrantyCovered": true, "requiresSkill": "kitchen-appliance", "scarce": false },
+        { "partNo": "HEAT-90", "name": "Auto-clean heating coil", "kind": "heating-element", "pricePaise": 64000, "warrantyCovered": false, "requiresSkill": "kitchen-appliance", "scarce": false },
+        { "partNo": "BAFL-90", "name": "Baffle filter set", "kind": "consumable", "pricePaise": 48000, "warrantyCovered": false, "requiresSkill": "kitchen-appliance", "scarce": false },
+        { "partNo": "LAMP-90", "name": "LED lamp module", "kind": "consumable", "pricePaise": 22000, "warrantyCovered": false, "requiresSkill": "kitchen-appliance", "scarce": false },
+        { "partNo": "CAP-90", "name": "Motor run capacitor", "kind": "board", "pricePaise": 34000, "warrantyCovered": true, "requiresSkill": "kitchen-appliance", "scarce": true }
+      ],
+      "faultCodes": [
+        { "code": "K1", "meaning": "Weak suction; motor capacitor degraded", "likelyPart": "CAP-90", "needsPart": true, "skill": "kitchen-appliance", "safetyRisk": false },
+        { "code": "K2", "meaning": "No suction; blower motor seized", "likelyPart": "MOT-90", "needsPart": true, "skill": "kitchen-appliance", "safetyRisk": false },
+        { "code": "K5", "meaning": "Touch panel unresponsive", "likelyPart": "PCB-90", "needsPart": true, "skill": "kitchen-appliance", "safetyRisk": false },
+        { "code": "K7", "meaning": "Auto-clean not heating; coil open", "likelyPart": "HEAT-90", "needsPart": true, "skill": "kitchen-appliance", "safetyRisk": false }
+      ]
+    },
+    {
+      "modelId": "IC-30",
+      "brand": "HeatWave",
+      "name": "HeatWave Induction Cooktop IC-30",
+      "category": "induction-cooktop",
+      "specs": { "type": "single-zone induction", "powerW": 2100, "zones": 1 },
+      "warrantyMonths": 24,
+      "warrantyCoverage": "Parts and labour 24 months on the IGBT and control board.",
+      "requiresSkill": "kitchen-appliance",
+      "parts": [
+        { "partNo": "IGBT-30", "name": "IGBT power module", "kind": "board", "pricePaise": 98000, "warrantyCovered": true, "requiresSkill": "kitchen-appliance", "scarce": true },
+        { "partNo": "PCB-30", "name": "Induction control board", "kind": "board", "pricePaise": 115000, "warrantyCovered": true, "requiresSkill": "kitchen-appliance", "scarce": false },
+        { "partNo": "COIL-30", "name": "Induction work coil", "kind": "mechanical", "pricePaise": 86000, "warrantyCovered": true, "requiresSkill": "kitchen-appliance", "scarce": false },
+        { "partNo": "FAN-30", "name": "Cooling fan", "kind": "motor", "pricePaise": 40000, "warrantyCovered": false, "requiresSkill": "kitchen-appliance", "scarce": false },
+        { "partNo": "NTC-30", "name": "Pan-temperature NTC sensor", "kind": "sensor", "pricePaise": 28000, "warrantyCovered": false, "requiresSkill": "kitchen-appliance", "scarce": false },
+        { "partNo": "GLAS-30", "name": "Ceramic glass top", "kind": "consumable", "pricePaise": 120000, "warrantyCovered": false, "requiresSkill": "kitchen-appliance", "scarce": false }
+      ],
+      "faultCodes": [
+        { "code": "I1", "meaning": "No heating; IGBT power module failed", "likelyPart": "IGBT-30", "needsPart": true, "skill": "kitchen-appliance", "safetyRisk": true },
+        { "code": "I3", "meaning": "Overheat shutdown; cooling fan stalled", "likelyPart": "FAN-30", "needsPart": true, "skill": "kitchen-appliance", "safetyRisk": false },
+        { "code": "I5", "meaning": "Pan-detect error; NTC sensor drift", "likelyPart": "NTC-30", "needsPart": true, "skill": "kitchen-appliance", "safetyRisk": false },
+        { "code": "I7", "meaning": "Dead panel; control board fault", "likelyPart": "PCB-30", "needsPart": true, "skill": "kitchen-appliance", "safetyRisk": false }
+      ]
+    }
+  ]
+}
