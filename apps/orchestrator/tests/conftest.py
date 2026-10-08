@@ -5,6 +5,9 @@ from __future__ import annotations
 from pathlib import Path
 
 import pytest
+from app.commerce.razorpay import FakeRazorpay
+from app.commerce.service import CommerceService
+from app.config import settings
 from app.db.models import Base
 from app.graph.build import build_graph
 from app.graph.checkpointer import make_checkpointer
@@ -49,9 +52,19 @@ def inventory() -> FakeInventory:
 
 
 @pytest.fixture
-def toolbox(salesforce, inventory):
-    """The controlled surface over the same fakes the test asserts on."""
-    return build_toolbox(salesforce, inventory)
+def razorpay() -> FakeRazorpay:
+    return FakeRazorpay()
+
+
+@pytest.fixture
+def commerce() -> CommerceService:
+    return CommerceService(settings.commerce_labour_paise, settings.commerce_currency)
+
+
+@pytest.fixture
+def toolbox(salesforce, inventory, commerce, razorpay):
+    """The controlled surface over the same fakes the test asserts on (incl. commerce.*, Step 6)."""
+    return build_toolbox(salesforce, inventory, commerce, razorpay)
 
 
 @pytest.fixture
