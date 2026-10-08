@@ -13,7 +13,7 @@ dev:           ## run the orchestrator (FastAPI + consumer) on :8000
 	cd apps/orchestrator && uv run uvicorn app.main:app --reload --port 8000
 
 panel:         ## run the control panel (Vite) on :5173
-	cd apps/control-panel && npm install && npm run dev
+	cd apps/control-panel && pnpm install && pnpm dev
 
 test:          ## run orchestrator tests (no infra needed)
 	cd apps/orchestrator && uv run pytest -q

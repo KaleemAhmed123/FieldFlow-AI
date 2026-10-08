@@ -1,0 +1,6 @@
+# pnpm 10+ reads the build-script allowlist here (no longer from package.json).
+# esbuild ships a platform binary via a postinstall script that Vite needs.
+allowBuilds:
+  esbuild: true
+onlyBuiltDependencies:
+  - esbuild
