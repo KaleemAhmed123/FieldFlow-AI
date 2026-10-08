@@ -6,6 +6,11 @@
 >
 > **One idea the whole system serves:** *AI proposes, deterministic policy decides, a human
 > approves risk; RCS (rich WhatsApp-style messaging) is the customer's control plane.*
+>
+> **How to read this playbook:** skim the headings — each numbered section is one job (setup,
+> everyday commands, run the demo, per-feature how-tos, repo map, what's next, delegation, prompts).
+> Code blocks are copy-paste-ready; the `# comments` above each command say what it does and why.
+> You don't have to curl by hand — see the Swagger note in §2 to fire any endpoint from the browser.
 
 ---
 
@@ -66,6 +71,13 @@ curl http://localhost:8000/tools         # the controlled tool surface (reads vs
 ```
 
 > **Windows PowerShell:** use `curl.exe` (plain `curl` is an alias for a different command there).
+
+> **You don't need curl — FastAPI ships Swagger UI.** With `make dev` up, open
+> **http://localhost:8000/docs** in a browser: an interactive page listing every endpoint
+> (`/sim/*`, `/cases`, `/tools`, …). Click one → "Try it out" → fill the JSON body → "Execute". It
+> fires the exact same request as the curl lines below, no terminal needed. (`http://localhost:8000/redoc`
+> is a read-only reference view of the same API.) The curl snippets in this playbook are just the
+> copy-paste / scriptable form of those same calls.
 
 ---
 
@@ -175,6 +187,167 @@ uv run pytest -q tests/test_llm.py tests/test_confidence.py
 > **Deps are installed** (`groq`, `google-genai`). `make install` runs plain `uv sync`, which prunes
 > the dev extras — use `uv sync --extra dev` to get `pytest`/`ruff` back before `make test`.
 
+## 3d. Commerce: quote → Approve & Pay → capture (build step 6)
+
+*When a repair needs paid work (a part not covered by warranty), the customer approves + pays over
+RCS via a Razorpay page, then we capture and confirm.* Mock-first: `FakeRazorpay` behind a
+`PaymentGateway` seam (blank `RAZORPAY_KEY_*` → the fake, offline). Money is integer **paise**.
+
+**The one rule for money:** the LLM proposes *which part*; the **price book** (`app/commerce/
+service.py`) decides the **amount**. Every money step (quote/order/payment/refund) is an action tool
+that runs the ladder and may refuse. **No double-charge** is guaranteed twice: idempotent capture at
+the gateway (keyed by paymentId) + envelope dedupe on the payment `eventId`.
+
+**What makes a job chargeable:** the chosen option needs a part AND (asset out of warranty OR
+`reason == additional_fault_found`). Two ways to demo it:
+
+```bash
+# A) reason-driven: a newly-found fault is outside warranty scope → chargeable on the default appt.
+curl -X POST http://localhost:8000/sim/appointment-at-risk \
+  -H "Content-Type: application/json" \
+  -d '{"workOrderId":"WO-PAY","reason":"additional_fault_found"}'
+
+# B) warranty-driven: fire against the out-of-warranty appointment SA-OOW (asset warranty expired).
+curl -X POST http://localhost:8000/sim/appointment-at-risk \
+  -H "Content-Type: application/json" \
+  -d '{"workOrderId":"WO-PAY","appointmentId":"SA-OOW","reason":"part_missing"}'
+
+# Customer picks the part-fit slot (the usual reply). Case → PAYMENT_PENDING, a "payment" card with
+# a payUrl is "sent" (the Razorpay Open-URL).
+curl -X POST http://localhost:8000/sim/customer-reply \
+  -H "Content-Type: application/json" \
+  -d '{"correlationId":"WO-PAY","slotId":"t-part-1","version":1}'
+
+# The customer completes payment — a normal /sim step, like /sim/customer-reply (no webhooks in the
+# POC). status=captured → case CLOSED.
+#   eventId is the no-double-charge key: fire the SAME eventId twice → charged ONCE (2nd = duplicate).
+curl -X POST http://localhost:8000/sim/payment \
+  -H "Content-Type: application/json" \
+  -d '{"correlationId":"WO-PAY","paymentId":"pay_demo","status":"captured","eventId":"evt-pay-1"}'
+
+curl http://localhost:8000/cases/WO-PAY   # decisionTrace.commerce = {quote, order, payment}
+```
+
+- **High-value gate:** a quote ≥ `COMMERCE_HIGH_VALUE_PAISE` (default ₹5,000) pauses at
+  `AWAITING_QUOTE_APPROVAL` for an operator — resume with the **existing** `/sim/approve`.
+- Env: `RAZORPAY_KEY_ID`, `RAZORPAY_KEY_SECRET` (blank → fake), `COMMERCE_CURRENCY`,
+  `COMMERCE_LABOUR_PAISE`, `COMMERCE_HIGH_VALUE_PAISE` (see `.env.example`).
+
+```bash
+# Prove the commerce flow + no-double-charge offline (no keys needed) — runs in CI:
+uv run pytest -q tests/test_commerce.py
+```
+
+**Going live (real Razorpay Test-Mode — Step 9):** the gateway is built behind the seam. Set a
+`rzp_test_…` key pair in `.env` and `build_gateway` swaps `FakeRazorpay` → the real `RazorpayGateway`
+automatically (a non-test key aborts the boot — Test-Mode only). The real path creates a real payment
+link (`short_url`), and `/sim/payment` **polls** Razorpay (`payment_link.fetch`) to confirm the real
+`paid` status — still no webhook. The `razorpay` dep + the one live payment are the only remaining
+gated bits:
+
+```bash
+uv add razorpay          # only when you run the live fire (not needed for any test)
+# then set RAZORPAY_KEY_ID=rzp_test_... + RAZORPAY_KEY_SECRET=... in .env, run the §3d flow,
+# open the real short_url, pay with test card 4111 1111 1111 1111, fire /sim/payment, see it CLOSED.
+```
+
+## 3e. Vonage RCS: real send + real inbound/status webhooks (build step 9b)
+
+*The customer gets the reschedule options as a real RCS **carousel** on their Android, taps a slot,
+and the tap comes back to us as a real **webhook** that resumes the case.* Mock-first:
+`FakeVonage` is the default; `build_vonage` only swaps in the real client when the send is **armed**.
+`/sim/*` stays the offline twin, so all tests run with no device and no creds.
+
+**The two secrets (different jobs):**
+- **Send** uses **Basic auth** = your `VONAGE_API_KEY` + `VONAGE_API_SECRET`. (No private key needed
+  in our code.)
+- **Inbound webhooks** are verified with the **`VONAGE_SIGNATURE_SECRET`** (dashboard → Settings) —
+  a JWT signed HMAC-SHA256; we check it with Python stdlib, no extra dependency.
+
+**Arming the real send (safe by default):** real send fires **only** when *all* of
+`VONAGE_API_KEY` + `VONAGE_API_SECRET` + `VONAGE_RCS_AGENT_ID` + `VONAGE_TEST_TO` are set. Keys can
+sit in `.env` during offline dev without a billed send ever firing — you arm it by setting
+`VONAGE_TEST_TO` (your test Android, E.164) right before a demo. **$100 credit: one send per manual
+demo, never in a loop or a test.**
+
+**The postback trick:** each slot's button carries a hidden string
+`postback_data = "correlationId|slotId|version"`. Vonage echoes it back on the inbound webhook, so
+`/webhooks/inbound` alone knows which case, which slot, and which offer version (NFR-6 stale guard)
+— no phone-number lookup.
+
+### Set up the dev tunnel + webhooks (junior-friendly)
+
+```bash
+# 1. Expose localhost:8000 to the internet (Vonage must reach your webhooks).
+ngrok http 8000
+#    → copy the https URL it prints, e.g. https://ab12cd34.ngrok-free.app
+
+# 2. Vonage dashboard → Applications → your app → Capabilities → Messages:
+#    Inbound URL  = https://<ngrok>/webhooks/inbound     (POST)
+#    Status  URL  = https://<ngrok>/webhooks/status      (POST)
+#    Save. (The ngrok URL changes each restart on the free plan — re-paste it when it does.)
+
+# 3. Dashboard → Settings → copy the Signature secret → VONAGE_SIGNATURE_SECRET in .env.
+```
+
+> **Status: live fire is DEBT (deferred 2026-10-08).** The send + webhook code is built, armed behind
+> `VONAGE_TEST_TO`, and fully offline-tested (65 green). The one real device send below is pending the
+> tunnel/dashboard setup — do it when you can; nothing else is blocked on it.
+
+### The gated live demo (needs creds + your go + a test Android)
+
+```bash
+uv add httpx             # make the HTTP client a runtime dep (only for the live send; tests already have it)
+# In .env: VONAGE_API_KEY, VONAGE_API_SECRET, VONAGE_RCS_AGENT_ID, and VONAGE_TEST_TO=+9198XXXXXXXX
+# Start the app (make dev), fire an at-risk event (§3) → a real RCS carousel lands on the phone.
+# Tap a slot on the phone → Vonage POSTs /webhooks/inbound → the case advances exactly like
+#   /sim/customer-reply. Watch /webhooks/status callbacks (delivered/read) land in the audit trail.
+curl http://localhost:8000/cases/<correlationId>   # the tap moved it past OPTIONS_SENT
+```
+
+```bash
+# Offline (no device, no creds) — the full send→tap→resume contract + signature verify, runs in CI:
+uv run pytest -q tests/test_vonage.py
+```
+
+## 3f. Failure demos: RCS→SMS fallback + Salesforce-down/DLQ (build step 7)
+
+*Two "things break, we degrade gracefully" demos.* Offline for tests; the DLQ land+replay needs
+RabbitMQ (`make up` or CloudAMQP).
+
+**7a — RCS→SMS fallback.** If the RCS card doesn't deliver, the same options go out as a plain SMS.
+
+```bash
+# Fire an at-risk event (§3) → options "sent" (OPTIONS_SENT). Then simulate a failed delivery:
+curl -X POST http://localhost:8000/sim/delivery-status \
+  -H "Content-Type: application/json" \
+  -d '{"messageUuid":"<the card's messageUuid>","status":"failed"}'
+# → the system sends the options as SMS (FakeVonage records it; real Vonage sends channel=sms).
+#   An sms_fallback audit row is written; the customer still replies with a slotId as usual.
+```
+
+> Offline the FakeVonage card has no `messageUuid`; the **real** send (§3e) returns one. For a pure
+> offline check, `test_failures.py` sets it and asserts the SMS fires only on failed + awaiting.
+
+**7b — Salesforce-down → DLQ → replay.** A dependency outage parks the event safely, not lost.
+
+```bash
+# 1. Knock Salesforce "down" (no restart):
+curl -X POST http://localhost:8000/sim/fault -H "Content-Type: application/json" -d '{"salesforceDown":true}'
+# 2. Fire an at-risk event (§3) → processing fails → the message dead-letters to events.dlq.
+# 3. See what's parked (read-only):
+curl http://localhost:8000/dlq          # {available, depth, messages:[...]}
+# 4. Bring Salesforce back:
+curl -X POST http://localhost:8000/sim/fault -H "Content-Type: application/json" -d '{"salesforceDown":false}'
+# 5. Replay the parked messages → they process normally:
+curl -X POST http://localhost:8000/sim/dlq/replay   # {"replayed": N}
+```
+
+```bash
+# Prove both offline (no RabbitMQ needed; the DLQ land+replay itself is the manual demo above):
+uv run pytest -q tests/test_failures.py
+```
+
 ## 4. Scenario → where it's proven
 
 | Scenario | What it shows | How to see it today |
@@ -185,6 +358,11 @@ uv run pytest -q tests/test_llm.py tests/test_confidence.py
 | Inventory race (NFR-5) | part taken → atomic reserve refuses → re-offer | live: `reason:"part_missing"` · or `make test` |
 | Stale reply (NFR-6) | old version tap rejected → re-sent | `make test` → `test_decision_flow.py` |
 | Tool refusal (Step 2) | action tool says no, with a reason | `make test` → `test_tools.py` |
+| Commerce (Step 6) | chargeable repair → quote → Approve & Pay → capture → close | §3d · or `make test` → `test_commerce.py` |
+| No double-charge (Step 6) | same payment fired twice charges once | §3d, same `eventId` twice · or `test_commerce.py` |
+| Vonage RCS (Step 9b) | real carousel send + tap webhook + signature verify + dedup | §3e · or `make test` → `test_vonage.py` |
+| RCS→SMS fallback (Step 7) | card undelivered → same options over SMS | §3f · or `make test` → `test_failures.py` |
+| Salesforce-down/DLQ (Step 7) | outage → event parks in DLQ → replay on recovery | §3f (needs RabbitMQ) · or `test_failures.py` |
 
 > **New to the code? Learn it by testing.** [`docs/specs/field-service-recovery/testing-guide.md`](docs/specs/field-service-recovery/testing-guide.md)
 > maps every existing test to the promise it guards, and lists 10 scoped tests to add. Good first tasks.
@@ -202,10 +380,11 @@ apps/orchestrator/app/
   tools/registry.py     the Toolbox (Step 2): read/action kinds, call(), describe(), build_toolbox().
   tools/salesforce.py   FakeSalesforce — granular reads + reschedule (swap for real MCP at step 9).
   tools/inventory.py    FakeInventory — find_part (read) + atomic reserve (action), mutable stock.
-  tools/vonage.py       FakeVonage — records the RCS card it "would send".
+  tools/vonage.py       FakeVonage + real VonageMessagesClient (Step 9b) + card_to_rcs + build_vonage.
+  webhooks/routes.py    /webhooks/inbound + /webhooks/status (Step 9b): JWT verify, dedup, resume.
   services/case_service.py  durable state: idempotency + Case row + audit + decision trace.
   api/routes.py         /cases, /cases/{id}, /tools, /health, /metrics (what the panel reads).
-  sim/routes.py         /sim/* — fire events / resume a paused case (stands in for real webhooks).
+  sim/routes.py         /sim/* — fire events / resume a paused case (the offline twin of /webhooks/*).
   main.py               builds the fakes + Toolbox + graph once on startup; runs the consumer.
 packages/contract/      shared Pydantic event/type models (one source of truth both sides validate).
 docs/specs/field-service-recovery/   the specs + living context docs. START at context/00-overview.md.
@@ -218,9 +397,22 @@ docs/specs/field-service-recovery/   the specs + living context docs. START at c
 Done: **Spine** → **Step 1** (policy + graph + NFR-4/5/6) → **Step 2** (Toolbox / MCP surface) →
 **§3** (10 reasons / 3 archetypes) → **Step 4** (RAG, **live-verified** 2026-10-08) →
 **Step 5** (LLM proposer ladder + evidence-weighted confidence, **shipped + LIVE-VERIFIED**
-2026-10-08: real Groq `openai/gpt-oss-120b` + Gemini `gemini-flash-latest` + fallback proven).
-Next: **6** commerce + Razorpay · **7** failure demos · **8** panel + dashboards ·
-**9** swap mocks → real Vonage + real Salesforce MCP.
+2026-10-08: real Groq `openai/gpt-oss-120b` + Gemini `gemini-flash-latest` + fallback proven) →
+**Step 6** (commerce + Razorpay, **shipped mock-first** 2026-10-08: quote → Approve & Pay → capture,
+price-book authority, two-layer no-double-charge) →
+**Step 9 Razorpay** (real `RazorpayGateway` + poll-confirm + test-key guard **built + offline-tested**
+2026-10-08; only the one live Test-Mode fire is gated) →
+**Step 9b Vonage RCS** (real `VonageMessagesClient` send + `/webhooks/inbound` + `/webhooks/status`
+with stdlib JWT verify + `message_uuid` dedup, **built + offline-tested** 2026-10-08, **65 green**;
+only the one live send to a real Android is gated — see §3e) →
+**Step 7 Failure demos** (RCS→SMS fallback + Salesforce-down/DLQ peek/replay, **built + offline-tested**
+2026-10-08, **70 green**; the DLQ land+replay is a manual RabbitMQ demo — see §3f).
+Next: **9b live fire** (arm `VONAGE_TEST_TO` + the two webhook URLs) · **9c** real
+Salesforce MCP ([`salesforce-handoff.md`](docs/specs/field-service-recovery/salesforce-handoff.md)) ·
+**7** failure demos · **8** panel + dashboards.
+
+> **Webhook scope:** Razorpay payment = `/sim/payment` **poll** (no Razorpay webhook). **Vonage RCS
+> inbound (taps) + status = real webhooks** (9b). `/sim/*` stays as the offline twin for tests/demos.
 
 Full detail per step: `docs/specs/field-service-recovery/build-step-*.md`.
 
@@ -231,8 +423,10 @@ Full detail per step: `docs/specs/field-service-recovery/build-step-*.md`.
 - **Give to a junior (boring, scoped, reversible):** create free-tier accounts (Supabase,
   CloudAMQP, Razorpay test, Logfire), fill `.env`, run the panel, add the `reason` knob in §3,
   seed/fixture data, docs tidy-ups.
-- **Keep for yourself / coordinate:** Salesforce DE org + access (the big dependency — start early),
-  architecture calls, policy rules, anything irreversible or security-sensitive.
+- **Keep for yourself / coordinate:** Salesforce DE org + access (the big dependency — start early;
+  the offload sheet is [`docs/specs/field-service-recovery/salesforce-handoff.md`](docs/specs/field-service-recovery/salesforce-handoff.md)),
+  Vonage (access + $100 credit received 2026-10-08 — spend sensibly), architecture calls, policy
+  rules, anything irreversible or security-sensitive.
 
 ---
 
@@ -240,6 +434,40 @@ Full detail per step: `docs/specs/field-service-recovery/build-step-*.md`.
 
 Paste these to drive the next pieces. House rules: **plan first, wait for go**, plain-English
 teaching, mock-first, and I'll always surface what you must set up.
+
+**Build Step 9b (real Vonage RCS — send + real webhooks) — the NEXT step, plan already written**
+```
+Continue FieldFlow. Working dir C:\Users\hp\Desktop\RCS-VONAGE-POC. Read in order: CLAUDE.md (hard
+rules: plain teaching style, plan-first, WAIT for my go on every open question, surface my action
+items + junior delegation, end every reply with What I achieved / What I need from you / Next steps;
+playbook.md is the command home; spec-driven under docs/specs/field-service-recovery/);
+handoff-fieldflow.md (LATEST block first — session 4); build-step-9b.md (THE plan for this step);
+build-step-9.md (Razorpay, the sibling swap); playbook.md §3c/§3d/§6.
+
+State: Spine + Steps 1,2,§3,4,5,6 shipped; Step 9 Razorpay gateway BUILT + offline-tested (real
+RazorpayGateway + poll-confirm + test-key guard; only the one live Test-Mode fire is gated). Run from
+apps/orchestrator: `uv run pytest -q` → 58 passed; `uv run ruff check .` clean; dev deps via
+`uv sync --extra dev`. The one rule holds everywhere: AI proposes, deterministic policy decides,
+humans approve risk, tools act and may refuse.
+
+Task = Step 9b: swap FakeVonage → real Vonage Messages API over RCS — real SEND (carousel of slot
+options; "Approve & Pay" open-url card) AND REAL inbound + status WEBHOOKS. The webhook decision is
+corrected: "no webhooks" was Razorpay-only (Razorpay stays a /sim/payment poll); Vonage webhooks ARE
+built here and must be robust (JWT signature verify, dedup inbound by message_uuid, return 200) — the
+partners will see this. Keep /sim/* as the offline twin so all 58 tests stay green on FakeVonage.
+
+House rules for this step: PLAN FIRST — the plan already exists in build-step-9b.md (sections 1-5 +
+open questions OQ1-OQ5 with my recommendations). Restate it, confirm/adjust the OQs with me, and WAIT
+for my explicit go before editing code. Mock-first: build VonageMessagesClient + build_vonage factory
+(fake unless creds set) + the Card→RCS payload mapping + /webhooks/inbound + /webhooks/status with
+signed-fixture unit tests FIRST (offline, 58 stay green). The ONE live send to a real Android device
+is gated on my go + creds. My action items: I'll add VONAGE_API_KEY, VONAGE_API_SECRET,
+VONAGE_APPLICATION_ID, the private key, VONAGE_RCS_SENDER to .env ("soon"), plus an ngrok tunnel +
+the two webhook URLs on the Vonage Application + a test Android (Google Messages) number. $100 credit
+— spend sensibly (one send per manual demo, never in a loop/test). Update playbook.md + build-step-9b
+Explanation in the same change when we ship. Ask before editing any context/** doc beyond the
+already-approved webhook-scope note.
+```
 
 **Start the next build step**
 ```
