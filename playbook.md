@@ -66,9 +66,21 @@ make up / make down   # start/stop local infra via Docker (only if you don't use
 Health check once `make dev` is up:
 
 ```bash
-curl http://localhost:8000/health        # {"status":"ok"}
+curl http://localhost:8000/health        # {"status":"ok"}  — cheap liveness, never hits the network
 curl http://localhost:8000/tools         # the controlled tool surface (reads vs actions)  ← Step 2
+curl http://localhost:8000/health/deps   # deep dep health (cheap: DB+queue only)           ← Step 10
+curl "http://localhost:8000/health/deps?deep=1"  # + real vendor pings (groq/gemini models.list, jina HEAD)
 ```
+
+> **`/health/deps` (Step 10)** — one call, every external dep's state. **Cheap by default:** only
+> Postgres `SELECT 1` + the RabbitMQ connection check (our own infra) + config-present for the rest —
+> **zero third-party API calls**, so the panel can poll it freely. **`?deep=1`** adds the real pings:
+> groq/gemini `models.list()` (free, not a completion) and an unauthenticated jina HEAD (reachability
+> only, never embeds — embedding is billable). Result is **cached 30s** (`HEALTH_DEPS_CACHE_TTL_S`), the
+> route **never throws** (a dead dep is `"down"`, still HTTP 200) and **never returns keys**. Shape:
+> `{"status":"ok|degraded|down","deep":false,"checks":{"postgres":{"status":"ok","latencyMs":12}, …}}`.
+> `status` = worst-of the required deps (postgres, rabbitmq); groq/gemini/jina/logfire can only drop it to
+> `degraded`; vonage (`armed`/`fake`) + razorpay (`test-mode`/`fake`) are informational.
 
 > **Windows PowerShell:** use `curl.exe` (plain `curl` is an alias for a different command there).
 
@@ -139,7 +151,8 @@ and cited.* Mock-first: unit tests use an in-memory store + a deterministic embe
 live store is Supabase pgvector + Jina embeddings + Jina reranker.
 
 ```bash
-# (Re)generate the synthetic knowledge corpus (all fake) — 2 PDFs + 2 md + 1 csv.
+# (Re)generate the knowledge corpus from the product catalog (app/data/catalog.json — 14 models,
+# all fake). Dense per-model service-manual PDFs + global warranty/SOP/troubleshooting/part-compat.
 uv run python scripts/generate_corpus.py
 
 # Ingest it into the configured store. Idempotent + incremental: re-running embeds only what
@@ -150,6 +163,12 @@ uv run python scripts/ingest_knowledge.py
 
 - Corpus lives in `app/rag/corpus/`. The graph calls `retrieve_knowledge` after `load_context`;
   the retrieved passages appear as `knowledgeSources` in each case's decision trace (`/cases/{id}`).
+- **The catalog (`app/data/catalog.json`) is the single source of truth** — it also seeds
+  `FakeInventory` stock and the `FakeSalesforce` asset, and grounds the LLM proposer (so a delay
+  proposes no part, and any part used is a real catalog part). Edit the catalog → re-run
+  `generate_corpus.py` → `ingest_knowledge.py`.
+- **Warm the RAG before a live demo:** the first live retrieval after a cold start is slow (~60s
+  for the Jina embed+rerank over the corpus); fire one throwaway event first, then it's ~2–6s.
 - Env: `JINA_API_KEY`, `JINA_MODEL`, `EMBEDDING_DIM`, `RETRIEVAL_K` (see `.env.example`).
 
 ## 3c. LLM proposer + evidence-weighted confidence (build step 5)
@@ -383,7 +402,8 @@ apps/orchestrator/app/
   tools/vonage.py       FakeVonage + real VonageMessagesClient (Step 9b) + card_to_rcs + build_vonage.
   webhooks/routes.py    /webhooks/inbound + /webhooks/status (Step 9b): JWT verify, dedup, resume.
   services/case_service.py  durable state: idempotency + Case row + audit + decision trace.
-  api/routes.py         /cases, /cases/{id}, /tools, /health, /metrics (what the panel reads).
+  api/routes.py         /cases, /cases/{id}, /tools, /health, /health/deps (Step 10), /metrics.
+  health.py             check_deps() — deep dep-health for /health/deps (concurrent, cached, no leaks).
   sim/routes.py         /sim/* — fire events / resume a paused case (the offline twin of /webhooks/*).
   main.py               builds the fakes + Toolbox + graph once on startup; runs the consumer.
 packages/contract/      shared Pydantic event/type models (one source of truth both sides validate).
@@ -607,10 +627,11 @@ Run make test and make lint, show the real output, then give the post-implementa
 
 ---
 
-## 9. Run the control panel (Step 8 — in progress)
+## 9. Run the control panel (Step 8 — shipped)
 
-*The React + Vite + TypeScript operator UI the Vonage partners see. Build with **pnpm**. Foundation
-is built + GREEN; views are being added — see [`docs/specs/field-service-recovery/build-step-8.md`](docs/specs/field-service-recovery/build-step-8.md).*
+*The React + Vite + TypeScript operator UI the Vonage partners see — a dense, dark-by-default
+(light-capable) console whose hero is the AI decision trace. Build with **pnpm**. Full write-up:
+[`docs/specs/field-service-recovery/build-step-8.md`](docs/specs/field-service-recovery/build-step-8.md).*
 
 ```bash
 cd apps/control-panel
@@ -625,8 +646,9 @@ pnpm run types          # regenerate TS types from packages/contract/schema/*.js
 - **Run the panel + the API together:** `make dev` (orchestrator on :8000; needs a queue for the
   `/sim/*` demos — CloudAMQP in `.env` or `make up`) **and** `pnpm dev` here (panel on :5173). Point
   the panel elsewhere with `VITE_API_URL` in `apps/control-panel/.env`.
-- **No backend needed for UI work:** a `VITE_USE_FIXTURES` flag (coming with the data layer) serves
-  captured sample responses so every view — incl. paused/approval/failure — renders with no queue.
+- **No backend needed for UI work:** set `VITE_USE_FIXTURES=true` (e.g. in `.env.local`) and the
+  panel serves an in-memory twin — every view (incl. paused/approval/commerce/failure) renders and
+  the ops-deck buttons work, with no backend and no queue. Unset it for the real demo.
 - **Theme:** dark by default, light is a full peer; the whole palette is CSS-variable tokens in
   `src/index.css` (Tailwind maps semantic names in `tailwind.config.js`). Re-skin = edit that one
   block. A persisted dark/light toggle lands with the shell.

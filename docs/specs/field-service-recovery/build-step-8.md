@@ -119,18 +119,20 @@ scripts/ (repo)                 gen-types (json-schema-to-typescript) wired to `
 - [x] 1. Tooling: deps in `package.json`, **pnpm lockfile**, theme tokens (dark+light),
       fonts (IBM Plex Sans + JetBrains Mono), CSS base, `@` import alias. *(QueryClient = part of
       task 2, not yet wired.)*
-- [~] 2. Data layer: `contract.gen.ts` **generated** (per-schema modules under `lib/contract/` +
-      curated re-export) + `cn.ts` **done**. **TODO:** `api.ts`, `trace.ts` (hand-typed
-      DecisionTrace), `metrics.ts`, `fixtures.ts` + flag, the Query hooks, QueryClient in `main.tsx`.
-- [ ] 3. shadcn `ui/` primitives + `Layout` shell (top bar, case rail, main stage, ops dock).
-- [ ] 4. **CaseList + CaseDetail hero** — `DecisionTrace` + `ConfidenceMeter` + `RcsCardPreview` +
+- [x] 2. Data layer: `contract.gen.ts` **generated**, `cn.ts`, `api.ts` (all endpoints + fixtures
+      toggle), `trace.ts` (hand-typed DecisionTrace + status model + helpers), `metrics.ts`
+      (Prometheus parser → tiles), `fixtures.ts` (in-memory twin + `VITE_USE_FIXTURES`), Query hooks
+      (`useLiveCases` seam, `useOps`, `useSim`), QueryClient + ThemeProvider in `main.tsx`.
+- [x] 3. shadcn `ui/` primitives (button, badge, panel, tooltip, tabs, scroll-area, dialog) +
+      `TopBar`/`PipelineStrip`/`ThemeToggle` + the 3-pane shell in `App.tsx`.
+- [x] 4. **CaseList + CaseDetail hero** — `DecisionTrace` + `ConfidenceMeter` + `RcsCardPreview` +
       `StatusTimeline`. (Priority A — the core narrative.)
-- [ ] 5. `ApprovalActions` (human + quote approval) wired to `/sim/approve`. (Priority A.)
-- [ ] 6. `FailureDeck` + `ToolsSurface`. (Priority B — operator power.)
-- [ ] 7. `MetricsStrip` from `/metrics`. (Priority C — glance.)
-- [ ] 8. Verify: `pnpm build` + typecheck clean; run live (`make dev` + `make panel`) and against
-      fixtures; a Playwright screenshot. Update `playbook.md` (how to run the panel) and write the
-      §7 Explanation here.
+- [x] 5. `ApprovalActions` (human + quote approval) wired to `/sim/approve`. (Priority A.)
+- [x] 6. `FailureDeck` + `ToolsSurface` in the tabbed `OpsDock`. (Priority B.)
+- [x] 7. `MetricsStrip` from `/metrics` (tiles). (Priority C.)
+- [x] 8. Verified: `pnpm typecheck` + `pnpm build` clean; ran in fixtures mode and screenshotted
+      dark + light + the approval + metrics states via Playwright; Approve advanced a case live.
+      Playbook §9 updated; §7 Explanation below.
 
 ### Resume notes (for the next session — read before coding)
 
@@ -164,6 +166,13 @@ scripts/ (repo)                 gen-types (json-schema-to-typescript) wired to `
 - **2026-10-09** — Package manager confirmed **pnpm**. Theme requirement sharpened: **dark + light
   both first-class and fully token-driven** (one CSS-variable block, Tailwind mapped to semantic
   tokens, persisted toggle); dark is the default. Reskin/relight = edit the one token block.
+- **2026-10-09 (SHIPPED).** Tasks 2–8 done — full data layer, shadcn `ui/` primitives, 3-pane
+  shell, the decision-trace hero (confidence ring + factor bars + knowledge + tools + removed +
+  commerce), RCS preview, lifecycle timeline, approval actions, failure deck, tools surface, metrics
+  tiles. Dark + light both work (token-driven). `pnpm typecheck` + `pnpm build` green; verified in
+  fixtures mode via Playwright (dark/light/approval/metrics) and Approve advanced a case live.
+  `recharts` left installed for a future metrics time-series (only unused dep). Backend untouched.
+  §7 Explanation written.
 - **2026-10-09 (checkpoint — foundation built, paused for account switch).** Shipped task 1 + part
   of task 2 and reached a GREEN build. Added: `package.json` (deps installed via pnpm),
   `pnpm-workspace.yaml` (esbuild build-script allowlist), `tailwind.config.js` (semantic token →
@@ -176,4 +185,80 @@ scripts/ (repo)                 gen-types (json-schema-to-typescript) wired to `
 
 ## 7. Explanation
 
-_(Added when the step ships — the 7-section post-implementation walkthrough.)_
+### 1. What changed
+A full React + Vite + TypeScript control panel now lives in `apps/control-panel/`, replacing the
+thin spine UI. It is a dense, dark-by-default (light-capable) operator console that makes the one
+story obvious and puts the **decision trace** at the centre of the screen. It talks to the live
+orchestrator by polling, and can also run entirely on captured fixtures with no backend.
+
+### 2. Why it was needed
+This is the UI the Vonage partners see. The backend already proves the idea (AI proposes → policy
+decides → human approves risk → RCS is the control plane); the panel had to **show** it — the
+reasons, the cited knowledge, the tools called, the confidence maths, and what policy removed —
+rather than dump JSON.
+
+### 3. How it works, end to end
+- **Boot:** `main.tsx` wraps the app in `ThemeProvider` (sets `<html data-theme>`, persisted) and a
+  TanStack Query `QueryClientProvider` (TanStack Query = a data-fetching library that caches server
+  data and refetches on a timer).
+- **Live data:** `useLiveCases` polls `GET /cases` every 1.5s. That one response already carries the
+  full decision trace for every case, so it powers both the list and the detail — no per-case fetch.
+  `useOps` polls `/tools`, `/dlq`, `/metrics`; `useHealth` drives the Live/Offline dot.
+- **Actions:** `useSim` exposes every `/sim/*` call as a mutation; on success it invalidates the
+  polled queries so the UI catches up on the next tick.
+- **Layout:** a three-pane shell — case rail (left), the case detail with the decision-trace hero
+  (centre), and a tabbed ops dock (right: Simulate / Tools / Metrics). A top bar shows the brand, the
+  always-on pipeline strip (the four stages, lit up to where the selected case is), the live/fixtures
+  state, and the theme toggle.
+- **The hero (`DecisionTrace`):** the model's proposal prose, the `ConfidenceMeter` (an SVG ring for
+  the final score + the five weighted factor bars), the deterministic `reason[]`, cited
+  `knowledgeSources[]` with scores, `toolsUsed[]` tagged read vs action, policy-`removed[]` slots,
+  the commerce quote, and a raw-JSON dialog.
+- **Customer side:** `RcsCardPreview` renders the sent card in a phone frame; tapping a slot calls
+  `/sim/customer-reply` (the offline twin of the RCS webhook). `StatusTimeline` shows the lifecycle
+  with the current step and any "waiting for approval" pause. `ApprovalActions` shows the
+  Approve/Reject gate only when the case is paused (low-confidence/risk or high-value quote).
+- **Ops dock:** `FailureDeck` fires at-risk by reason, re-fires for idempotency, toggles the
+  Salesforce fault, peeks/replays the DLQ, and fires a delivery-status → SMS fallback; `ToolsSurface`
+  lists the reads vs actions from `/tools`; `MetricsStrip` parses `/metrics` into tiles.
+
+### 4. Files / functions
+- **`lib/`:** `contract.gen.ts` (generated envelope types), `trace.ts` (hand-typed `DecisionTrace`,
+  status model, helpers — the one thing the schema can't generate), `api.ts` (typed client + the
+  `VITE_USE_FIXTURES` switch), `fixtures.ts` (in-memory twin), `metrics.ts` (Prometheus parser),
+  `theme.tsx` (dark/light provider), `cn.ts`.
+- **`hooks/`:** `useLiveCases` (the polling seam), `useOps`, `useSim`.
+- **`components/ui/`:** button, badge, panel, tooltip, tabs, scroll-area, dialog (Radix + tokens).
+- **`components/`:** TopBar, PipelineStrip, ThemeToggle, CaseList, CaseDetail, DecisionTrace,
+  ConfidenceMeter, RcsCardPreview, StatusTimeline, ApprovalActions, OpsDock, FailureDeck,
+  ToolsSurface, MetricsStrip. `App.tsx` is the shell.
+- **Theme:** `index.css` (token block, dark + light) + `tailwind.config.js` (semantic token map,
+  fonts, motion).
+
+### 5. Important decisions
+- **Polling, behind a `useLiveCases` seam** — real SSE deferred (it needs a backend broadcast bus
+  that would risk the 70 green tests). Swapping to SSE later touches only that one hook.
+- **Hand-rolled, token-driven charts** (SVG ring + CSS bars) over a chart lib for the confidence
+  view, so they flip with the theme and match the terminal aesthetic. `recharts` stays installed for
+  a likely future metrics time-series (the only dep not yet used).
+- **Fixtures as a real in-memory twin**, not just static reads, so the whole demo (incl. the failure
+  deck and approvals) works offline for dev and as a fallback.
+- **Types generated from the contract**, with only the free-form decision trace hand-typed.
+- **Backend untouched** — its 70 tests stay green.
+
+### 6. Tests / verification
+- `pnpm typecheck` → clean. `pnpm build` → green (1719 modules, ~118 KB gzip JS).
+- Ran in fixtures mode via Playwright at 1440×900: screenshotted the dark default, the light theme,
+  the paused-approval case, and the metrics tiles — all render correctly.
+- Clicked **Approve** on a paused case → it advanced `AWAITING_APPROVAL → OPTIONS_SENT` live,
+  confirming the mutation → fixture transition → query-invalidation → re-render loop.
+- Only console noise was a favicon 404, now fixed with an inline SVG icon.
+
+### 7. Edge cases & limitations
+- **No real-time push yet** — polling has up to ~1.5s latency (fine for a demo; SSE is the upgrade).
+- **Fixture transitions are shallow** — they flip statuses believably but don't run the real policy
+  engine; the live backend is the source of truth.
+- **Desktop-first** — the 3-pane grid is tuned for ≥1280px; below that it stacks into one scroll
+  (usable, not optimised). This is an operator console, by design.
+- **Live `/sim/*` demos need the queue up** (CloudAMQP or `make up`); fixtures need nothing.
+- **Grafana deferred** — the in-panel metrics strip covers the demo.

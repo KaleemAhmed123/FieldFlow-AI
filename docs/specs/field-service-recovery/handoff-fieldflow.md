@@ -2,20 +2,23 @@
 
 ## LATEST — 2026-10-09 (session 5): read this first
 
-- **Step 8 (control panel) is IN PROGRESS — foundation built, GREEN checkpoint, paused mid-build so
-  the user could switch accounts (weekly limit).** No work lost; everything is on disk + committed.
-- **What's done (apps/control-panel/):** React+Vite+TS panel's **foundation** — deps installed with
-  **pnpm**, a **fully token-driven theme** (dark default + light, one CSS-var block in
-  `src/index.css`, Tailwind mapped to semantic tokens in `tailwind.config.js`), fonts (IBM Plex Sans
-  + JetBrains Mono), `@/` import alias, `src/lib/cn.ts`, and the **generated** contract types
-  (`scripts/gen-types.mjs` → `src/lib/contract.gen.ts` + `src/lib/contract/*.ts`, run via
-  `pnpm run types`). `pnpm typecheck` + `pnpm build` both pass.
-- **What's NOT done yet:** the data layer (`api.ts` for all endpoints, hand-typed `trace.ts`,
-  `metrics.ts` Prometheus parser, `fixtures.ts` + `VITE_USE_FIXTURES` flag, TanStack Query hooks,
-  QueryClient in `main.tsx`), the shadcn `ui/` primitives, the `Layout` shell, and all views
-  (CaseList, **CaseDetail decision-trace hero**, RcsCardPreview, StatusTimeline, ApprovalActions,
-  FailureDeck, ToolsSurface, MetricsStrip). The **old** `App.tsx`/`api.ts` are still the live app
-  (untouched) so the build stays coherent — replace them when the new shell lands.
+- **Step 8 (control panel) is SHIPPED.** Full React+Vite+TS operator console in
+  `apps/control-panel/`, dark-by-default + light (token-driven), hero = the AI decision trace.
+  `pnpm typecheck` + `pnpm build` green; verified in fixtures mode via Playwright (dark/light/
+  approval/metrics) and Approve advanced a case live. Backend untouched → still 70 green.
+- **What's in it:** 3-pane shell (case rail · case detail with the decision-trace hero · tabbed ops
+  dock) + top bar with the always-on pipeline strip and theme toggle. Hero = proposal prose +
+  confidence ring + 5 weighted factor bars + cited knowledge + tools (read/action) + policy-removed
+  + commerce + raw JSON. Plus RCS phone preview (tap → /sim/customer-reply), lifecycle timeline,
+  Approve/Reject gate, failure deck (fire-by-reason, idempotency re-fire, fault toggle, DLQ
+  peek/replay, delivery-status→SMS), /tools surface, and `/metrics` tiles. Data = TanStack Query
+  polling `GET /cases` every 1.5s (one poll carries the full trace) behind a `useLiveCases` seam;
+  `/sim/*` are mutations that invalidate the polls.
+- **Offline:** `VITE_USE_FIXTURES=true` serves an in-memory twin (every view + the ops-deck buttons
+  work with no backend/queue). Real demo: `make dev` (+ queue) + `make panel` — see playbook §9.
+- **Deferred (named):** real **SSE** (behind the `useLiveCases` seam; needs a backend broadcast bus
+  that would risk the 70 tests) · **Grafana** (the in-panel metrics strip covers the demo) ·
+  `recharts` is installed but unused, kept for a future metrics time-series.
 - **Decisions locked this session (OQ1–Q5 in [`build-step-8.md`](build-step-8.md) §3):** Tailwind +
   shadcn primitives we own · **polling now** behind a `useLiveCases` seam (**real SSE deferred** —
   needs a backend broadcast bus that would risk the 70 green tests) · ship **all** views A→B→C ·
