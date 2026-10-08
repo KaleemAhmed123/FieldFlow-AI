@@ -1,5 +1,87 @@
-part_no,fits_model,description,requires_skill
-PCB-492,XYZ-492,Inverter control board assembly,daikin-inverter
-CAP-492,XYZ-492,High-voltage capacitor for PCB-492,daikin-inverter
-SENSOR-11,XYZ-492,Outdoor temperature sensor,general-hvac
-FILTER-100,XYZ-492,Consumable air filter (not warranty-covered),general-hvac
+part_no,fits_model,description,kind,requires_skill,warranty_covered
+PCB-492,XYZ-492,Inverter control board assembly,board,inverter-ac,true
+CAP-492,XYZ-492,Compressor capacitor,board,inverter-ac,true
+SENSOR-11,XYZ-492,Outdoor temperature sensor,sensor,general-hvac,true
+FILTER-100,XYZ-492,Consumable air filter,consumable,general-hvac,false
+COMP-492,XYZ-492,Rotary inverter compressor,compressor,inverter-ac,true
+FAN-492,XYZ-492,Outdoor condenser fan motor,motor,general-hvac,false
+VALV-492,XYZ-492,Electronic expansion valve,valve,inverter-ac,false
+PCB-220,WA-220,Window AC control board,board,general-hvac,true
+COMP-220,WA-220,Reciprocating compressor,compressor,general-hvac,true
+FAN-220,WA-220,Blower fan motor,motor,general-hvac,false
+THRM-220,WA-220,Rotary thermostat,thermostat,general-hvac,false
+FILTER-220,WA-220,Washable mesh filter,consumable,general-hvac,false
+CAP-220,WA-220,Compressor start capacitor,board,general-hvac,true
+MEM-X2,AP-RO-X2,RO membrane 80 GPD,membrane,water-treatment,true
+PUMP-X2,AP-RO-X2,Booster pump 100 psi,pump,water-treatment,true
+SV-X2,AP-RO-X2,Solenoid inlet valve,valve,water-treatment,false
+PCB-X2,AP-RO-X2,Purifier control PCB,board,water-treatment,true
+FILT-SED,AP-RO-X2,Sediment pre-filter,consumable,water-treatment,false
+FILT-CARB,AP-RO-X2,Carbon post-filter,consumable,water-treatment,false
+UVB-9,AP-UV-9,UV electronic ballast,board,water-treatment,true
+UVL-9,AP-UV-9,UV lamp 11W,consumable,water-treatment,false
+CHAM-9,AP-UV-9,Quartz UV chamber,mechanical,water-treatment,true
+PUMP-9,AP-UV-9,Diaphragm pump,pump,water-treatment,true
+FLOW-9,AP-UV-9,Flow sensor,sensor,water-treatment,false
+FILT-9,AP-UV-9,Spun sediment filter,consumable,water-treatment,false
+COMP-410,DD-410,Hermetic compressor R600a,compressor,refrigeration,true
+PCB-410,DD-410,Inverter fridge control board,board,refrigeration,true
+FANE-410,DD-410,Evaporator fan motor,motor,refrigeration,false
+DEFR-410,DD-410,Defrost heater element,heating-element,refrigeration,false
+THRM-410,DD-410,Defrost thermostat,thermostat,refrigeration,false
+GASK-410,DD-410,Door gasket set,consumable,refrigeration,false
+SENS-410,DD-410,Evaporator temperature sensor,sensor,refrigeration,true
+COMP-620,SBS-620,Linear inverter compressor,compressor,refrigeration,true
+PCB-620,SBS-620,Main control board,board,refrigeration,true
+DISP-620,SBS-620,Ice & water dispenser valve,valve,refrigeration,false
+FANC-620,SBS-620,Condenser fan motor,motor,refrigeration,false
+WFILT-620,SBS-620,Inline water filter,consumable,refrigeration,false
+SENS-620,SBS-620,Ambient humidity sensor,sensor,refrigeration,true
+HEAT-620,SBS-620,Dispenser anti-freeze heater,heating-element,refrigeration,false
+MOT-70,FL-70,BLDC drive motor,motor,laundry,true
+PCB-70,FL-70,Washer main control board,board,laundry,true
+PUMP-70,FL-70,Drain pump assembly,pump,laundry,false
+DOOR-70,FL-70,Door lock interlock,mechanical,laundry,false
+BELT-70,FL-70,Drive belt,consumable,laundry,false
+HEAT-70,FL-70,Wash heater element,heating-element,laundry,true
+MOT-65,TL-65,Universal wash motor,motor,laundry,true
+PCB-65,TL-65,Timer control board,board,laundry,true
+VALV-65,TL-65,Water inlet valve,valve,laundry,false
+LID-65,TL-65,Lid switch,sensor,laundry,false
+GEAR-65,TL-65,Gearbox / transmission,mechanical,laundry,false
+BELT-65,TL-65,Pulley belt,consumable,laundry,false
+MAG-28,MW-28,Magnetron tube,mechanical,kitchen-appliance,true
+HVT-28,MW-28,High-voltage transformer,board,kitchen-appliance,true
+PCB-28,MW-28,Touch control board,board,kitchen-appliance,false
+DOOR-28,MW-28,Door interlock switch set,mechanical,kitchen-appliance,false
+FANC-28,MW-28,Convection fan motor,motor,kitchen-appliance,false
+HEAT-28,MW-28,Convection heating element,heating-element,kitchen-appliance,false
+ELEM-25,GZ-25,Heating element 2kW,heating-element,heating,true
+THRM-25,GZ-25,Adjustable thermostat,thermostat,heating,true
+TCO-25,GZ-25,Thermal cut-out safety switch,sensor,heating,true
+ANOD-25,GZ-25,Magnesium anode rod,consumable,heating,false
+GASK-25,GZ-25,Flange gasket,consumable,heating,false
+VALV-25,GZ-25,Pressure relief valve,valve,heating,false
+PUMP-14,DW-14,Wash circulation pump,pump,kitchen-appliance,true
+PCB-14,DW-14,Dishwasher control board,board,kitchen-appliance,true
+HEAT-14,DW-14,Flow-through heater,heating-element,kitchen-appliance,true
+VALV-14,DW-14,Water inlet valve,valve,kitchen-appliance,false
+DRN-14,DW-14,Drain pump,pump,kitchen-appliance,false
+SEAL-14,DW-14,Door seal,consumable,kitchen-appliance,false
+MOT-500,AC-500,Brushless blower motor,motor,general-hvac,true
+PCB-500,AC-500,Air-quality control board,board,general-hvac,true
+PM-500,AC-500,Laser PM2.5 sensor,sensor,general-hvac,true
+HEPA-500,AC-500,True-HEPA filter,consumable,general-hvac,false
+CARB-500,AC-500,Activated carbon filter,consumable,general-hvac,false
+MOT-90,CH-90,Suction blower motor,motor,kitchen-appliance,true
+PCB-90,CH-90,Touch + gesture control board,board,kitchen-appliance,true
+HEAT-90,CH-90,Auto-clean heating coil,heating-element,kitchen-appliance,false
+BAFL-90,CH-90,Baffle filter set,consumable,kitchen-appliance,false
+LAMP-90,CH-90,LED lamp module,consumable,kitchen-appliance,false
+CAP-90,CH-90,Motor run capacitor,board,kitchen-appliance,true
+IGBT-30,IC-30,IGBT power module,board,kitchen-appliance,true
+PCB-30,IC-30,Induction control board,board,kitchen-appliance,true
+COIL-30,IC-30,Induction work coil,mechanical,kitchen-appliance,true
+FAN-30,IC-30,Cooling fan,motor,kitchen-appliance,false
+NTC-30,IC-30,Pan-temperature NTC sensor,sensor,kitchen-appliance,false
+GLAS-30,IC-30,Ceramic glass top,consumable,kitchen-appliance,false
