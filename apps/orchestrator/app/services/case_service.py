@@ -26,10 +26,19 @@ from app.logging import correlation_id, get_logger
 log = get_logger("case")
 
 # Case status while paused on an interrupt, keyed by the interrupt payload's "type".
-_PAUSED_STATUS = {"approval_request": "AWAITING_APPROVAL", "await_reply": "OPTIONS_SENT"}
+_PAUSED_STATUS = {
+    "approval_request": "AWAITING_APPROVAL", "await_reply": "OPTIONS_SENT",
+    # Commerce pauses (Step 6): the operator's high-value quote gate, and the payment wait.
+    "quote_approval": "AWAITING_QUOTE_APPROVAL", "await_payment": "PAYMENT_PENDING",
+}
 # Statuses that represent a fresh decision worth an audit row + a decision-trace row.
-_DECISION_STATUS = {"AWAITING_APPROVAL", "OPTIONS_SENT"}
-_AUDIT_KIND = {"AWAITING_APPROVAL": "approval_requested", "OPTIONS_SENT": "options_sent"}
+_DECISION_STATUS = {
+    "AWAITING_APPROVAL", "OPTIONS_SENT", "AWAITING_QUOTE_APPROVAL", "PAYMENT_PENDING",
+}
+_AUDIT_KIND = {
+    "AWAITING_APPROVAL": "approval_requested", "OPTIONS_SENT": "options_sent",
+    "AWAITING_QUOTE_APPROVAL": "quote_approval_requested", "PAYMENT_PENDING": "payment_requested",
+}
 
 
 def _case_status(result: dict) -> str:
@@ -68,9 +77,54 @@ async def _persist(session: AsyncSession, cid: str, result: dict) -> str:
         if status == "OPTIONS_SENT":
             telemetry.cards_sent.inc()
     else:
+        # On close, prefer the payment receipt in the audit payload (money is the headline effect).
         session.add(AuditLog(correlation_id=cid, kind=status.lower(),
-                             payload=result.get("executed", {})))
+                             payload=result.get("captured") or result.get("executed", {})))
     return status
+
+
+# A delivery status that means "the RCS card did not reach the customer" → trigger the SMS fallback.
+_FAILED_DELIVERY = {"failed", "rejected", "undelivered"}
+
+
+def _options_sms(card: dict) -> str:
+    """Build the plain-SMS version of the reschedule options (Step 7a, OQ2): list each slot with its
+    id so the customer can reply with it through the normal reply path. SMS has no carousel."""
+    lines = [f"- {o['slotId']}: {o['label']}" for o in card.get("options", [])]
+    return ("Your appointment needs rescheduling. Reply with one slot id:\n"
+            + "\n".join(lines)) if lines else "Your appointment needs rescheduling."
+
+
+async def record_delivery_status(
+    session: AsyncSession, vonage, *, message_uuid: str | None, status: str | None, to: str | None
+) -> None:
+    """Record a Vonage delivery-status callback (delivered/read/failed) on the trail, and run the
+    RCS→SMS fallback (Step 7a): if the card did NOT deliver and the case is still waiting for the
+    customer's tap, resend the same options as a plain SMS so the customer isn't stuck.
+
+    # ponytail: small scan over cases to find the sender; a sent_messages index if volume grows.
+    """
+    case = None
+    if message_uuid:
+        cases = (await session.execute(select(Case))).scalars().all()
+        case = next((c for c in cases if (c.sent_card or {}).get("messageUuid") == message_uuid),
+                    None)
+    cid = case.correlation_id if case else (message_uuid or "unknown")
+    session.add(AuditLog(correlation_id=cid, kind="delivery_status",
+                         payload={"messageUuid": message_uuid, "status": status, "to": to}))
+
+    # Fallback: a failed delivery on a case still awaiting the reply → the same options over SMS.
+    if (status in _FAILED_DELIVERY and case is not None and case.status == "OPTIONS_SENT"
+            and case.sent_card):
+        text = _options_sms(case.sent_card.get("card", {}))
+        vonage.send_sms(cid, text)
+        session.add(AuditLog(correlation_id=cid, kind="sms_fallback",
+                             payload={"reason": status, "text": text}))
+        telemetry.sms_fallbacks.inc()
+        log.info("case.sms_fallback", correlationId=cid, reason=status)
+
+    await session.commit()
+    log.info("case.delivery_status", messageUuid=message_uuid, status=status)
 
 
 async def handle_event(session: AsyncSession, event: AppointmentAtRisk, *, graph) -> dict:
@@ -94,10 +148,31 @@ async def handle_event(session: AsyncSession, event: AppointmentAtRisk, *, graph
 
 
 async def resume_case(
-    session: AsyncSession, correlation_id_: str, payload: dict[str, Any], *, graph
+    session: AsyncSession,
+    correlation_id_: str,
+    payload: dict[str, Any],
+    *,
+    graph,
+    idempotency_key: str | None = None,
 ) -> dict:
-    """Resume a paused case with a human approval or a customer reply."""
+    """Resume a paused case with a human approval, a customer reply, or a payment confirmation.
+
+    `idempotency_key` (the payment event's id) is the envelope-level no-double-charge guard: firing
+    the same payment twice is dropped before the graph re-runs, so it can't re-send a card or clash
+    on an already-closed case. The gateway's idempotent capture is the second, independent guard.
+    """
     correlation_id.set(correlation_id_)
+    if idempotency_key is not None:
+        if await session.get(IdempotencyKey, idempotency_key):
+            telemetry.events_duplicate.inc()
+            log.info("resume.duplicate", key=idempotency_key)  # same payment fired twice → drop
+            case = (
+                await session.execute(select(Case).where(Case.correlation_id == correlation_id_))
+            ).scalar_one_or_none()
+            return {"status": "duplicate", "case": case.status if case else None,
+                    "correlationId": correlation_id_}
+        session.add(IdempotencyKey(key=idempotency_key))
+
     config = {"configurable": {"thread_id": correlation_id_}}
     result = await graph.ainvoke(Command(resume=payload), config)
 
