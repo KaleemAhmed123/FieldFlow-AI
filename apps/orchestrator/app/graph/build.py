@@ -28,6 +28,9 @@ from langgraph.graph import END, StateGraph
 from langgraph.types import Command, interrupt
 
 from app import policy
+from app.config import settings
+from app.llm.confidence import confidence_factors, score_confidence
+from app.llm.proposer import Proposer, build_proposer
 from app.logging import get_logger
 from app.rag.store import KnowledgeStore
 from app.tools.registry import Toolbox
@@ -50,19 +53,6 @@ def _add(used: list[str], *names: str) -> list[str]:
             out.append(n)
     return out
 
-# Ten realistic at-risk reasons collapse to three behaviour archetypes. Only the archetype drives
-# the proposer + confidence; the extra labels are demo variety (a real SF event carries any).
-REASON_ARCHETYPE = {
-    "technician_delay": "delay", "traffic_weather": "delay",
-    "technician_no_show": "delay", "customer_access_issue": "delay",
-    "part_missing": "parts", "wrong_part_shipped": "parts", "additional_fault_found": "parts",
-    "asset_complex": "complex", "safety_risk": "complex", "warranty_dispute": "complex",
-}
-# Mock stand-in for the LLM's self-reported confidence (Groq lands in a later step). `complex`
-# sits below the 0.7 policy threshold, so it routes to human approval (NFR-4).
-CONFIDENCE_BY_ARCHETYPE = {"delay": 0.9, "parts": 0.8, "complex": 0.5}
-
-
 class GraphState(TypedDict, total=False):
     event: dict[str, Any]
     context: dict[str, Any]
@@ -72,7 +62,14 @@ class GraphState(TypedDict, total=False):
     options: list[dict[str, Any]]
     toolsUsed: list[str]
     policy_result: dict[str, Any]
+    archetype: str
+    llm_confidence: float
+    explanation: str
+    llmProvider: str
+    degraded: bool
+    rateLimitNote: str | None
     confidence: float
+    confidenceBreakdown: dict[str, Any]
     decision: dict[str, Any]
     card: dict[str, Any]
     sent: dict[str, Any]
@@ -84,35 +81,6 @@ class GraphState(TypedDict, total=False):
     note: str
 
 
-def _propose(reason: str, context: dict) -> tuple[list[dict], float]:
-    """The mock proposer (LLM seam). Deterministic candidates + confidence, per archetype."""
-    tech = context.get("technician", {}).get("name", "Technician")
-    skill = (context.get("technician", {}).get("skills") or [None])[0]
-    archetype = REASON_ARCHETYPE.get(reason, "delay")
-    confidence = CONFIDENCE_BY_ARCHETYPE[archetype]
-
-    if archetype == "parts":
-        # One slot needs the scarce part; one swaps in a loaner and needs none. If the part is
-        # lost to the race (NFR-5), the part slot drops out and the loaner slot still stands.
-        candidates = [
-            {"slotId": "t-part-1", "label": "TODAY 15:00-17:00", "technician": tech,
-             "note": "After part fitted", "requiredSkill": skill, "partNo": "CAP-492"},
-            {"slotId": "t-swap-1", "label": "TOMORROW 10:00-12:00", "technician": tech,
-             "note": "Loaner unit, no part needed", "requiredSkill": skill},
-        ]
-        return candidates, confidence
-
-    # delay / complex: two reschedule slots with the same technician (complex just scores lower
-    # confidence, so policy sends it to a human — NFR-4).
-    candidates = [
-        {"slotId": "t-today-1", "label": "TODAY 11:00-13:00", "technician": tech,
-         "note": "Same technician", "requiredSkill": skill},
-        {"slotId": "t-tomorrow-1", "label": "TOMORROW 09:00-11:00", "technician": tech,
-         "note": "Earlier slot", "requiredSkill": skill},
-    ]
-    return candidates, confidence
-
-
 def build_graph(
     toolbox: Toolbox,
     vonage: VonageClient,
@@ -120,9 +88,12 @@ def build_graph(
     *,
     checkpointer,
     retrieval_k: int = 3,
+    proposer: Proposer | None = None,
 ):
-    """Compile the graph once, closing over the Toolbox + Vonage + KnowledgeStore (RAG). Reused
-    across start + resume."""
+    """Compile the graph once, closing over the Toolbox + Vonage + KnowledgeStore (RAG) + the LLM
+    proposer. Reused across start + resume. The proposer defaults to the deterministic-only ladder
+    (fully offline) when none is injected, so tests and keyless runs never touch the network."""
+    propose = proposer or build_proposer(settings, providers=[])
 
     def load_case(state: GraphState) -> GraphState:
         log.info("graph.load_case", appointmentId=state["event"].get("appointmentId"))
@@ -179,8 +150,11 @@ def build_graph(
         return {"sla": {"windowMinutes": window, "delayMinutes": delay, "breached": breached}}
 
     def generate_options(state: GraphState) -> GraphState:
+        # The LLM only *proposes* (Level-2). The proposer runs the ladder Groq -> Gemini ->
+        # deterministic; whatever it returns is untrusted and re-validated by policy next.
         reason = state["event"].get("reason", "technician_delay")
-        candidates, confidence = _propose(reason, state["context"])
+        proposal = propose(reason, state["context"], state.get("knowledgeSources", []))
+        candidates = proposal.options
         # Fresh inventory snapshot every pass via the read tool, so a recompute after a lost race
         # sees the new stock. Record find_part as a real tool use when any candidate needs a part.
         part_nos = {c["partNo"] for c in candidates if c.get("partNo")}
@@ -191,12 +165,24 @@ def build_graph(
         context = {**state["context"], "inventory": inv}
         tools_used = _add(state.get("toolsUsed", []), "inventory.find_part") if part_nos \
             else state.get("toolsUsed", [])
-        log.info("graph.generate_options", reason=reason, candidates=len(candidates))
-        return {"candidates": candidates, "confidence": confidence, "context": context,
-                "toolsUsed": tools_used}
+        log.info("graph.generate_options", reason=reason, candidates=len(candidates),
+                 provider=proposal.provider, degraded=proposal.degraded)
+        return {"candidates": candidates, "context": context, "toolsUsed": tools_used,
+                "archetype": proposal.archetype, "llm_confidence": proposal.llm_confidence,
+                "explanation": proposal.explanation, "llmProvider": proposal.provider,
+                "degraded": proposal.degraded, "rateLimitNote": proposal.rate_limit_note}
 
     def policy_validate(state: GraphState) -> GraphState:
         valid, result = policy.validate_options(state["candidates"], state["context"])
+        # Evidence-weighted confidence: blended here (not in generate_options) because policy
+        # headroom (APPROVED/PARTIAL/DENIED) is one of the five factors and is only known now.
+        top_score = max((s.get("score", 0.0) for s in state.get("knowledgeSources", [])),
+                        default=0.0)
+        factors = confidence_factors(
+            state.get("archetype", "delay"), result["policyResult"], top_score,
+            state["context"], state.get("llm_confidence", 0.0), settings.conf_grounding_full,
+        )
+        final, breakdown = score_confidence(factors, settings.confidence_weights)
         decision = {
             "decision": "OFFER_RESCHEDULE",
             "reason": [
@@ -206,12 +192,19 @@ def build_graph(
             ],
             "knowledgeSources": state.get("knowledgeSources", []),
             "toolsUsed": state.get("toolsUsed", []),
-            "confidence": state["confidence"],
+            "confidence": final,
+            "confidenceBreakdown": breakdown,
+            "explanation": state.get("explanation"),
+            "llmProvider": state.get("llmProvider"),
+            "degraded": state.get("degraded", False),
+            "rateLimitNote": state.get("rateLimitNote"),
             "policyResult": result["policyResult"],
             "removed": result["removed"],
         }
-        log.info("graph.policy_validate", valid=len(valid), result=result["policyResult"])
-        return {"options": valid, "policy_result": result, "decision": decision}
+        log.info("graph.policy_validate", valid=len(valid), result=result["policyResult"],
+                 confidence=round(final, 4))
+        return {"options": valid, "policy_result": result, "confidence": final,
+                "confidenceBreakdown": breakdown, "decision": decision}
 
     def human_approval(state: GraphState) -> GraphState:
         # Level-3 interrupt (NFR-4): persist and wait for an operator decision.
@@ -308,7 +301,10 @@ def build_graph(
     g.add_conditional_edges(
         "policy_validate",
         lambda s: "human_approval"
-        if policy.needs_human(s["confidence"], s["policy_result"]) else "offer_to_customer",
+        if policy.needs_human_for(
+            s["event"].get("reason", ""), s["confidence"], s["policy_result"],
+            settings.always_human_set, settings.conf_threshold,
+        ) else "offer_to_customer",
         {"human_approval": "human_approval", "offer_to_customer": "offer_to_customer"},
     )
     g.add_conditional_edges(

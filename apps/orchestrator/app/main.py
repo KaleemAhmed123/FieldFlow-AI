@@ -18,6 +18,7 @@ from app.config import settings
 from app.db.session import dispose_db, get_sessionmaker, init_db
 from app.graph.build import build_graph
 from app.graph.checkpointer import make_checkpointer
+from app.llm.proposer import build_proposer
 from app.logging import configure_logging, get_logger
 from app.queue.broker import Broker
 from app.rag import make_knowledge_store
@@ -46,9 +47,13 @@ async def lifespan(app: FastAPI):
     # RAG store (real Jina+pgvector if a key is set, else the in-memory fake). The graph reads it
     # through the KnowledgeStore seam, so this is the only line that changes when creds land.
     app.state.knowledge = make_knowledge_store(settings)
+    # The LLM proposer ladder (Groq -> Gemini -> deterministic). Built from settings: a provider is
+    # only live if its key is set, so a keyless boot runs the deterministic proposer offline.
+    app.state.proposer = build_proposer(settings)
     app.state.graph = build_graph(
         app.state.toolbox, app.state.vonage, app.state.knowledge,
         checkpointer=make_checkpointer(), retrieval_k=settings.retrieval_k,
+        proposer=app.state.proposer,
     )
 
     async def handle(routing_key: str, body: dict) -> None:
