@@ -13,7 +13,7 @@ from sqlalchemy import select
 def test_read_tool_returns_data(toolbox):
     res = toolbox.call("salesforce.get_asset", assetId="AST-1")
     assert res.ok
-    assert res.data["model"].startswith("Daikin")
+    assert "XYZ-492" in res.data["model"]
 
 
 def test_unknown_tool_is_refused_not_raised(toolbox):
@@ -73,8 +73,8 @@ async def test_context_composed_from_read_tools_and_toolsused_is_real(sessionmak
     case = await _case(sessionmaker, "WO-TOOLS")
     # Context was assembled from the four granular Salesforce reads.
     assert case.context["customer"]["name"] == "Kaleem Ahmed"
-    assert case.context["asset"]["model"].startswith("Daikin")
-    assert case.context["technician"]["skills"] == ["daikin-inverter"]
+    assert "XYZ-492" in case.context["asset"]["model"]
+    assert case.context["technician"]["skills"] == ["inverter-ac"]
     # toolsUsed is the real composition — no hard-coded list, no find_part (no part needed here).
     assert case.decision_trace["toolsUsed"] == [
         "salesforce.get_appointment", "salesforce.get_customer",
