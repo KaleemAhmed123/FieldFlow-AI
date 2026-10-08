@@ -1,0 +1,5 @@
+part_no,fits_model,description,requires_skill
+PCB-492,XYZ-492,Inverter control board assembly,daikin-inverter
+CAP-492,XYZ-492,High-voltage capacitor for PCB-492,daikin-inverter
+SENSOR-11,XYZ-492,Outdoor temperature sensor,general-hvac
+FILTER-100,XYZ-492,Consumable air filter (not warranty-covered),general-hvac
