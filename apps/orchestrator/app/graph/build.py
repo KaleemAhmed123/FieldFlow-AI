@@ -1,7 +1,8 @@
 """The LangGraph recovery graph — the decision core.
 
 Flow:
-  load_case -> load_context -> evaluate_sla -> generate_options -> policy_validate
+  load_case -> load_context -> retrieve_knowledge -> evaluate_sla
+    -> generate_options -> policy_validate
     policy_validate --(auto-safe)----------> offer_to_customer
     policy_validate --(risky/low-conf)-----> human_approval (interrupt; Level-3, NFR-4)
     human_approval  --(approved)-----------> offer_to_customer
@@ -28,6 +29,7 @@ from langgraph.types import Command, interrupt
 
 from app import policy
 from app.logging import get_logger
+from app.rag.store import KnowledgeStore
 from app.tools.registry import Toolbox
 from app.tools.vonage import VonageClient
 
@@ -64,6 +66,7 @@ CONFIDENCE_BY_ARCHETYPE = {"delay": 0.9, "parts": 0.8, "complex": 0.5}
 class GraphState(TypedDict, total=False):
     event: dict[str, Any]
     context: dict[str, Any]
+    knowledgeSources: list[dict[str, Any]]
     sla: dict[str, Any]
     candidates: list[dict[str, Any]]
     options: list[dict[str, Any]]
@@ -113,14 +116,43 @@ def _propose(reason: str, context: dict) -> tuple[list[dict], float]:
 def build_graph(
     toolbox: Toolbox,
     vonage: VonageClient,
+    knowledge: KnowledgeStore,
     *,
     checkpointer,
+    retrieval_k: int = 3,
 ):
-    """Compile the graph once, closing over the Toolbox + Vonage. Reused across start + resume."""
+    """Compile the graph once, closing over the Toolbox + Vonage + KnowledgeStore (RAG). Reused
+    across start + resume."""
 
     def load_case(state: GraphState) -> GraphState:
         log.info("graph.load_case", appointmentId=state["event"].get("appointmentId"))
         return {"status": "LOADING"}
+
+    def retrieve_knowledge(state: GraphState) -> GraphState:
+        # RAG (Level-2 grounding): fetch the most relevant manual/warranty/SOP passages for this
+        # asset + reason and attach them as cited knowledgeSources. Read-only — never mutates. A
+        # retrieval failure must NOT break the decision, so it degrades to no sources.
+        ctx = state["context"]
+        model = ctx.get("asset", {}).get("model", "")
+        reason = state["event"].get("reason", "")
+        query = f"{model} {reason} repair warranty part fault".strip()
+        try:
+            hits = knowledge.retrieve(query, retrieval_k)
+        except Exception as exc:  # noqa: BLE001 — knowledge must not break the decision (R9)
+            log.error("graph.retrieve_knowledge.failed", error=str(exc))
+            return {"knowledgeSources": []}
+        sources = [
+            {
+                "source": h.chunk.metadata.get("source"),
+                "locator": h.chunk.metadata.get("locator"),
+                "link": h.chunk.metadata.get("link"),
+                "score": round(h.score, 4),
+                "snippet": h.chunk.text[:160].replace("\n", " "),
+            }
+            for h in hits
+        ]
+        log.info("graph.retrieve_knowledge", query=query, sources=len(sources))
+        return {"knowledgeSources": sources}
 
     def load_context(state: GraphState) -> GraphState:
         # Compose the case context from granular read tools (SOC). Each call is recorded, so the
@@ -172,7 +204,7 @@ def build_graph(
                 f"policy={result['policyResult']}",
                 *(f"removed {r['slotId']}: {r['reason']}" for r in result["removed"]),
             ],
-            "knowledgeSources": [],
+            "knowledgeSources": state.get("knowledgeSources", []),
             "toolsUsed": state.get("toolsUsed", []),
             "confidence": state["confidence"],
             "policyResult": result["policyResult"],
@@ -259,6 +291,7 @@ def build_graph(
     g = StateGraph(GraphState)
     for name, fn in [
         ("load_case", load_case), ("load_context", load_context),
+        ("retrieve_knowledge", retrieve_knowledge),
         ("evaluate_sla", evaluate_sla), ("generate_options", generate_options),
         ("policy_validate", policy_validate), ("human_approval", human_approval),
         ("offer_to_customer", offer_to_customer), ("await_reply", await_reply),
@@ -268,7 +301,8 @@ def build_graph(
 
     g.set_entry_point("load_case")
     g.add_edge("load_case", "load_context")
-    g.add_edge("load_context", "evaluate_sla")
+    g.add_edge("load_context", "retrieve_knowledge")
+    g.add_edge("retrieve_knowledge", "evaluate_sla")
     g.add_edge("evaluate_sla", "generate_options")
     g.add_edge("generate_options", "policy_validate")
     g.add_conditional_edges(

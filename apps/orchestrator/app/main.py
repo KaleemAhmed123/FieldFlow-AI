@@ -20,6 +20,7 @@ from app.graph.build import build_graph
 from app.graph.checkpointer import make_checkpointer
 from app.logging import configure_logging, get_logger
 from app.queue.broker import Broker
+from app.rag import make_knowledge_store
 from app.services import case_service
 from app.sim.routes import router as sim_router
 from app.tools.inventory import FakeInventory
@@ -42,8 +43,12 @@ async def lifespan(app: FastAPI):
     # The Toolbox is the controlled MCP-shaped surface over the fakes; the graph only ever calls
     # tools through it. Swapping in a real MCP client later touches only this line.
     app.state.toolbox = build_toolbox(app.state.salesforce, app.state.inventory)
+    # RAG store (real Jina+pgvector if a key is set, else the in-memory fake). The graph reads it
+    # through the KnowledgeStore seam, so this is the only line that changes when creds land.
+    app.state.knowledge = make_knowledge_store(settings)
     app.state.graph = build_graph(
-        app.state.toolbox, app.state.vonage, checkpointer=make_checkpointer(),
+        app.state.toolbox, app.state.vonage, app.state.knowledge,
+        checkpointer=make_checkpointer(), retrieval_k=settings.retrieval_k,
     )
 
     async def handle(routing_key: str, body: dict) -> None:
