@@ -120,6 +120,26 @@ curl -X POST http://localhost:8000/sim/approve \
 
 ---
 
+## 3b. RAG / knowledge (build step 4)
+
+*RAG = retrieve relevant passages from our docs before the AI reasons, so decisions are grounded
+and cited.* Mock-first: unit tests use an in-memory store + a deterministic embedder (no keys). The
+live store is Supabase pgvector + Jina embeddings + Jina reranker.
+
+```bash
+# (Re)generate the synthetic knowledge corpus (all fake) — 2 PDFs + 2 md + 1 csv.
+uv run python scripts/generate_corpus.py
+
+# Ingest it into the configured store. Idempotent + incremental: re-running embeds only what
+# changed (add 5 pages anywhere → only those 5 embed). Needs JINA_API_KEY + Supabase for the real
+# store; falls back to the in-memory fake otherwise.
+uv run python scripts/ingest_knowledge.py
+```
+
+- Corpus lives in `app/rag/corpus/`. The graph calls `retrieve_knowledge` after `load_context`;
+  the retrieved passages appear as `knowledgeSources` in each case's decision trace (`/cases/{id}`).
+- Env: `JINA_API_KEY`, `JINA_MODEL`, `EMBEDDING_DIM`, `RETRIEVAL_K` (see `.env.example`).
+
 ## 4. Scenario → where it's proven
 
 | Scenario | What it shows | How to see it today |
@@ -131,6 +151,9 @@ curl -X POST http://localhost:8000/sim/approve \
 | Stale reply (NFR-6) | old version tap rejected → re-sent | `make test` → `test_decision_flow.py` |
 | Tool refusal (Step 2) | action tool says no, with a reason | `make test` → `test_tools.py` |
 
+> **New to the code? Learn it by testing.** [`docs/specs/field-service-recovery/testing-guide.md`](docs/specs/field-service-recovery/testing-guide.md)
+> maps every existing test to the promise it guards, and lists 10 scoped tests to add. Good first tasks.
+
 ---
 
 ## 5. Repo map (where to look)
@@ -139,6 +162,8 @@ curl -X POST http://localhost:8000/sim/approve \
 apps/orchestrator/app/
   graph/build.py        the LangGraph flow (the decision core). Calls tools ONLY via the Toolbox.
   policy/__init__.py    the deterministic authority: validate_options() + needs_human() gate.
+  rag/                  RAG: store (fake + pgvector), split, ingest, embed. retrieve_knowledge node.
+  rag/corpus/           generated synthetic manuals/warranty/SOP/part-compat (all fake).
   tools/registry.py     the Toolbox (Step 2): read/action kinds, call(), describe(), build_toolbox().
   tools/salesforce.py   FakeSalesforce — granular reads + reschedule (swap for real MCP at step 9).
   tools/inventory.py    FakeInventory — find_part (read) + atomic reserve (action), mutable stock.
@@ -155,9 +180,10 @@ docs/specs/field-service-recovery/   the specs + living context docs. START at c
 
 ## 6. Build status & what's next
 
-Done: **Spine** → **Step 1** (policy + graph + NFR-4/5/6) → **Step 2** (Toolbox / MCP surface).
-Next: **4** RAG (pgvector) · **5** Groq LLM · **6** commerce + Razorpay · **7** failure demos ·
-**8** panel + dashboards · **9** swap mocks → real Vonage + real Salesforce MCP.
+Done: **Spine** → **Step 1** (policy + graph + NFR-4/5/6) → **Step 2** (Toolbox / MCP surface) →
+**§3** (10 reasons / 3 archetypes) → **Step 4** (RAG, mock-first; live smoke test pending).
+Next: **5** Groq LLM · **6** commerce + Razorpay · **7** failure demos · **8** panel + dashboards ·
+**9** swap mocks → real Vonage + real Salesforce MCP.
 
 Full detail per step: `docs/specs/field-service-recovery/build-step-*.md`.
 

@@ -1,6 +1,6 @@
 # Build Step 4 — RAG (knowledge retrieval) feeding the decision
 
-**Status:** Planned (awaiting go on deps) · **Created:** 2026-10-08
+**Status:** Shipped + live-verified · **Created:** 2026-10-08 · **Last updated:** 2026-10-08
 
 > Goal: give the brain **grounding**. Before it reasons, retrieve the most relevant passages from
 > our own documents (manuals, warranty, SOPs, fault codes, part compatibility) and attach them as
@@ -79,14 +79,14 @@ hybrid search + eval harness now (prod-grade, deferred per Flag 1).
 
 ## Tasks
 
-- [ ] Add deps (after go).
-- [ ] `KnowledgeStore` Protocol + `FakeKnowledgeStore` (deterministic) + `PgVectorKnowledgeStore`.
-- [ ] `generate_corpus.py` → the 5-doc multi-format corpus with citations/links.
-- [ ] `ingest.py` + `scripts/ingest_knowledge.py` — multi-format, structure-aware, hash-upsert, idempotent.
-- [ ] `retrieve_knowledge` node + real `knowledgeSources` in the decision trace.
-- [ ] `JINA_API_KEY` + config/env.
-- [ ] `tests/test_rag.py` (mock-first) + keep all prior tests green; ruff clean.
-- [ ] A **live smoke test** against real Supabase + Jina (run once creds land) — the "real testing soon".
+- [x] Add deps (llama-index-core, embeddings-jinaai, postprocessor-jinaai-rerank, vector-stores-postgres, pypdf, reportlab).
+- [x] `KnowledgeStore` Protocol + `FakeKnowledgeStore` (deterministic) + `PgVectorKnowledgeStore`.
+- [x] `generate_corpus.py` → the 5-doc multi-format corpus with citations/links.
+- [x] `ingest.py` + `scripts/ingest_knowledge.py` — multi-format, structure-aware, hash-upsert, idempotent.
+- [x] `retrieve_knowledge` node + real `knowledgeSources` in the decision trace.
+- [x] `JINA_API_KEY` + config/env.
+- [x] `tests/test_rag.py` (mock-first) + all prior tests green (28/28); ruff clean.
+- [x] A **live smoke test** against real Supabase + Jina — run 2026-10-08. 17 chunks embedded into real pgvector; retrieval returned cited passages (warranty query → warranty Clause 1, score 0.752).
 
 ## Acceptance (self-checks, no infra)
 
@@ -106,3 +106,59 @@ proposes, policy decides; knowledge is read-only. Commands live in [`../../../pl
 
 - **2026-10-08** — Plan created after §3 shipped. Awaiting go on the dependency install, then build
   mock-first (creds gate only the live ingest + smoke test).
+- **2026-10-08** — **Built RAG mock-first.** Deps installed (note: LlamaIndex pinned SQLAlchemy
+  2.1→2.0.54; all prior tests stayed green). `KnowledgeStore` seam + fake + pgvector store; 5-doc
+  corpus generated; structure-aware splitters; idempotent/incremental ingestor (content-hash ids);
+  `retrieve_knowledge` node feeding real cited `knowledgeSources`; `tests/test_rag.py`. **28/28
+  pytest, ruff clean**, `app.main` imports. Retrieval sanity-checked on the fake (warranty query →
+  warranty doc, PCB query → control-board chunk). Live Jina+pgvector path written but not yet run.
+
+- **2026-10-08** — **Live smoke test run and passed.** `scripts/ingest_knowledge.py` embedded 17
+  chunks across all 5 docs into the user's real Supabase pgvector via Jina (`added=17`). A live
+  `retrieve()` (real Jina embed + pgvector cosine + Jina rerank) returned correctly cited passages:
+  "PCB covered under warranty?" → warranty Clause 1 (coverage), score 0.752; "fault code E5" → F3
+  control-board entries in the manual + troubleshooting doc. Fixed one cp1252 console crash in the
+  script's final `print` (`→` → `->`). 28/28 pytest still green, ruff clean. **Step 4 fully done.**
+
+## Explanation
+
+**1. What changed.** The brain now grounds its reasoning in documents. Before options are proposed,
+a new `retrieve_knowledge` node fetches the most relevant manual/warranty/SOP/part passages and
+attaches them as cited `knowledgeSources` in the decision trace.
+
+**2. Why.** Salesforce holds *data* (asset, warranty flag) but not *knowledge* (fault codes, repair
+SOP, policy wording, part compatibility). Grounding lets the demo show *"concluded likely PCB-492
+control-board failure, warranty-covered — per the service manual p.2 and warranty policy clause 1."*
+
+**3. How it works.**
+- `app/rag/split.py` splits each file on structure (md heading / csv row / pdf page) into chunks
+  with a **content-stable id** `doc#<sha1(text)>` + citation metadata (source, locator, link).
+- `app/rag/ingest.py` diffs those chunks against what the store already holds for that doc and
+  embeds/upserts only new-or-changed, deletes vanished, skips unchanged — idempotent + incremental
+  (inserting pages anywhere embeds only the new chunks). Store-agnostic, so it behaves identically
+  on the fake and the pgvector store.
+- `app/rag/store.py` — `FakeKnowledgeStore` (in-memory + deterministic token-hash embedder, for
+  tests). `app/rag/pgstore.py` — `PgVectorKnowledgeStore` (sync pgvector + Jina embeddings + Jina
+  reranker, for live). Both behind one `KnowledgeStore` Protocol.
+- `retrieve_knowledge` (graph) builds a query from asset model + reason, retrieves top-k, and writes
+  `knowledgeSources`; `policy_validate` carries them into the trace. A retrieval error degrades to
+  zero sources — knowledge never breaks the decision (R9).
+
+**4. Files.** new `app/rag/{embed,store,split,ingest,pgstore}.py` + `app/rag/__init__.py` factory;
+`scripts/{generate_corpus,ingest_knowledge}.py`; `app/rag/corpus/*` (5 generated docs); graph node +
+`knowledgeSources` in state/trace; `app/config.py` + `.env.example` (Jina/RAG settings); `main.py`
+(builds the store, picks real vs fake); `tests/conftest.py` (knowledge fixture) + `tests/test_rag.py`.
+
+**5. Decisions.** Store-agnostic incremental diff owned by us (testable, same code on fake + real)
+rather than LlamaIndex's docstore, so the "+pages anywhere" behaviour is proven in `pytest`.
+Deterministic embedder for tests (offline, no key); Jina only live. Vector table kept in our own
+Postgres (transparent, reuses our stack); LlamaIndex supplies the Jina embedding + reranker. Sync
+engine for the pgvector store so the sync graph nodes can call `retrieve()` directly.
+
+**6. Verification.** `pytest -q` → **28 passed** (+6 RAG). `ruff check` → clean. `import app.main`
+→ OK. Live ingest printed 17 chunks across 5 docs; retrieval returned the expected docs per query.
+
+**7. Edge cases & limits.** The live Jina+pgvector path is written but **not yet executed** (gated
+on running against the user's real DB/Jina). Deferred per Flag 1: eval harness, hybrid/BM25 search,
+multi-tenant corpora. Deterministic embedder is token-overlap, not semantic — real retrieval quality
+comes from Jina. Unstructured PDFs would fall back to page-level chunks (our corpus is structured).
