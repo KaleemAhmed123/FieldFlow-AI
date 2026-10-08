@@ -1,4 +1,59 @@
-# Handoff: FieldFlow AI POC — continue the build (Step 4 RAG shipped, live smoke test pending)
+# Handoff: FieldFlow AI POC — continue the build (Step 4 live-verified; Step 5 decided, next to build)
+
+## LATEST — 2026-10-08 (session 3): read this first
+
+- **Step 5 is SHIPPED + LIVE-VERIFIED.** New `app/llm/` package: the `Proposer` ladder (Groq →
+  Gemini → deterministic floor, lazy-imported SDKs), evidence-weighted `confidence.py` (5 factors,
+  LLM clamped `min(self,prior)`), and the `needs_human_for` risk-tier floor (`ALWAYS_HUMAN_REASONS`).
+  Confidence is blended in `policy_validate` (it needs policy headroom). **47 pytest green, ruff
+  clean, `import app.main` OK.** Full detail + 7-section Explanation in [`build-step-5.md`](build-step-5.md).
+- **Live-verified on the user's real keys (billed):** live Groq (blended 0.988), live Gemini
+  (0.9175), and a forced-429 + real-503 fallback all the way to deterministic (rate-limit note
+  preserved; complex blended 0.67 < 0.7 → human). Deps `groq` + `google-genai` are installed.
+- **MODEL DRIFT (important):** the planned `llama-3.3-70b-versatile` and `gemini-2.5-flash` were
+  **gone** from the free tiers (404). **Live-locked defaults now: Groq `openai/gpt-oss-120b`, Gemini
+  `gemini-flash-latest`** (set in `config.py`, `.env`, `.env.example`). Always verify model ids per
+  account with the SDK `.models.list()`.
+- **Calibration note:** the `complex` prior was lowered 0.50 → 0.40 so a well-grounded complex job
+  stays below the 0.7 gate at ANY grounding (0.50 would auto-send live). `test_confidence.py` locks it.
+- **Still open (gated — ask before doing):** (1) OQ5 — add the confidence + risk-tiering note to
+  `context/02` + `context/06` (needs a yes before editing context docs); (2) panel wiring of
+  `rateLimitNote`/`confidenceBreakdown` is Step 8. **Next build step is 6 (commerce + Razorpay).**
+- Housekeeping: `make install` = plain `uv sync` prunes dev extras → use `uv sync --extra dev`.
+  `temp.txt` at repo root is still untracked noise (safe to delete).
+
+---
+
+## LATEST — 2026-10-08 (session 2)
+
+- **Step 4 RAG is now LIVE-VERIFIED.** Ran `scripts/ingest_knowledge.py` against the user's real
+  Supabase pgvector via Jina: **17 chunks embedded**; real cited retrieval works (warranty query →
+  warranty Clause 1, score 0.752; fault-code query → F3 control-board). Fixed a cp1252 console crash
+  in the script's final `print` (`→`→`->`). **28/28 pytest, ruff clean.** See
+  [`build-step-4.md`](build-step-4.md) Updates.
+- **Commits:** all Step 4 work + the testing guide were handed to the user as **8 small commit
+  commands** (human-commits style, no AI trailer). Confirm they ran them: `git log --oneline` should
+  show the feat/test/docs commits above `8d0927d`. `temp.txt` (empty) was told to be deleted.
+- **Step 5 is DECIDED but NOT built.** Full plan + locked decisions in
+  [`build-step-5.md`](build-step-5.md). Summary: Groq `llama-3.3-70b-versatile` as the real proposer;
+  fallback ladder **Groq → Gemini `gemini-2.5-flash` → deterministic canned**; **evidence-weighted
+  confidence** (5 factors, LLM can only lower not inflate, calibration test locks delay/parts→auto &
+  complex→human — fixes over-escalation). Deps to add: `groq`, `google-genai`. Both `GROQ_API_KEY`
+  and `GEMINI_API_KEY` are already in `.env`.
+- **New doc:** [`testing-guide.md`](testing-guide.md) — a learn-by-testing guide for juniors (every
+  test mapped to the promise it guards + 10 scoped tests to add). Linked from playbook + spec index.
+- **OQ1–OQ5 are ANSWERED** (see build-step-5.md "Open questions — ANSWERED"). Key one: OQ1 =
+  **risk-tiering** — the calibrated confidence score is the primary gate **plus** a hard
+  `ALWAYS_HUMAN_REASONS` floor (`safety_risk`, `warranty_dispute`) that forces human review regardless
+  of score. OQ2 = every LLM + confidence knob lives in `.env` (tweakable). OQ5 = approved to update
+  context/02 + context/06 **after** Step 5 ships.
+- **Immediate next action:** implement Step 5 **mock-first** in the task order in `build-step-5.md`
+  (no need to re-confirm OQs). Tests stay offline (fake proposer); the 28 stay green; one gated live
+  Groq call + a forced 429 proves the fallback at the end.
+
+---
+
+# (original handoff — session 1)
 
 ## Context & goal
 - The user is the **tech lead** managing the FieldFlow AI POC (working dir `C:\Users\hp\Desktop\RCS-VONAGE-POC`). They are managing the project, not necessarily deep in the jargon — explain plainly.

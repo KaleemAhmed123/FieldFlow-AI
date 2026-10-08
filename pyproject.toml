@@ -9,5 +9,9 @@ target-version = "py311"
 [tool.ruff.lint]
 select = ["E", "F", "I", "UP", "B"]
 
+[tool.ruff.lint.per-file-ignores]
+# One-off data-generation scripts hold prose strings; line length isn't meaningful there.
+"**/scripts/generate_corpus.py" = ["E501"]
+
 [tool.pytest.ini_options]
 asyncio_mode = "auto"

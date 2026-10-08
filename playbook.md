@@ -140,6 +140,41 @@ uv run python scripts/ingest_knowledge.py
   the retrieved passages appear as `knowledgeSources` in each case's decision trace (`/cases/{id}`).
 - Env: `JINA_API_KEY`, `JINA_MODEL`, `EMBEDDING_DIM`, `RETRIEVAL_K` (see `.env.example`).
 
+## 3c. LLM proposer + evidence-weighted confidence (build step 5)
+
+*The LLM only proposes; policy still decides; humans still approve risk.* The proposer runs a fixed
+ladder — **Groq `openai/gpt-oss-120b` → Gemini `gemini-flash-latest` → deterministic** — and the
+first that returns valid JSON wins. The deterministic rung never fails, so an LLM outage or
+rate-limit can't take the decision loop down. **Live-verified 2026-10-08** on real keys (Groq +
+Gemini + a real 503 falling through to deterministic with the rate-limit note intact).
+
+> **Model ids drift on free tiers.** The originally-planned `llama-3.3-70b-versatile` and
+> `gemini-2.5-flash` were both gone by 2026-10-08. If a live call 404s, list what your key actually
+> serves: `uv run python -c "from app.config import settings; import groq; print([m.id for m in groq.Groq(api_key=settings.groq_api_key).models.list().data])"` (and the `genai` client's `.models.list()` for Gemini), then set `GROQ_MODEL`/`GEMINI_MODEL` in `.env`.
+
+- **Mock-first / offline:** with **both** `GROQ_API_KEY` and `GEMINI_API_KEY` blank, the
+  deterministic proposer runs — this is what the whole test suite uses (no network, no keys).
+- **Confidence** is blended from five weighted factors (reason difficulty, policy headroom, RAG
+  grounding, data completeness, the LLM's own clamped rating), shown in the trace as
+  `confidenceBreakdown`. The LLM can only *lower* confidence, never inflate past the gate.
+- **Risk-tiering:** `ALWAYS_HUMAN_REASONS` (default `safety_risk,warranty_dispute`) forces human
+  review at ANY confidence. Everything else is score-gated at `CONF_THRESHOLD` (0.7).
+- Env: `GROQ_API_KEY`, `GEMINI_API_KEY`, `GROQ_MODEL`, `GEMINI_MODEL`, `LLM_*` tuning, `CONF_W_*`
+  weights, `CONF_THRESHOLD`, `CONF_GROUNDING_FULL`, `ALWAYS_HUMAN_REASONS` (see `.env.example`).
+
+```bash
+# Prove the ladder + confidence offline (no keys needed) — these run in CI:
+uv run pytest -q tests/test_llm.py tests/test_confidence.py
+
+# LIVE (keys in .env + deps installed): fire an at-risk event (§3), read /cases/{id} — the trace's
+# llmProvider says "groq"/"gemini"/"deterministic", degraded/rateLimitNote flag any fallback, and
+# confidenceBreakdown carries the five factors. On Windows, prefix PYTHONIOENCODING=utf-8 for any
+# script that prints raw model text (it can contain non-ASCII).
+```
+
+> **Deps are installed** (`groq`, `google-genai`). `make install` runs plain `uv sync`, which prunes
+> the dev extras — use `uv sync --extra dev` to get `pytest`/`ruff` back before `make test`.
+
 ## 4. Scenario → where it's proven
 
 | Scenario | What it shows | How to see it today |
@@ -181,8 +216,10 @@ docs/specs/field-service-recovery/   the specs + living context docs. START at c
 ## 6. Build status & what's next
 
 Done: **Spine** → **Step 1** (policy + graph + NFR-4/5/6) → **Step 2** (Toolbox / MCP surface) →
-**§3** (10 reasons / 3 archetypes) → **Step 4** (RAG, mock-first; live smoke test pending).
-Next: **5** Groq LLM · **6** commerce + Razorpay · **7** failure demos · **8** panel + dashboards ·
+**§3** (10 reasons / 3 archetypes) → **Step 4** (RAG, **live-verified** 2026-10-08) →
+**Step 5** (LLM proposer ladder + evidence-weighted confidence, **shipped + LIVE-VERIFIED**
+2026-10-08: real Groq `openai/gpt-oss-120b` + Gemini `gemini-flash-latest` + fallback proven).
+Next: **6** commerce + Razorpay · **7** failure demos · **8** panel + dashboards ·
 **9** swap mocks → real Vonage + real Salesforce MCP.
 
 Full detail per step: `docs/specs/field-service-recovery/build-step-*.md`.
@@ -209,6 +246,31 @@ teaching, mock-first, and I'll always surface what you must set up.
 Continue FieldFlow. Read CLAUDE.md + docs/specs/field-service-recovery/context/00-overview.md +
 scaffold.md (build order). Plan Step <N> from scaffold §6: restate the task, list open questions
 with your recommendations, and wait for my go before editing. Mock-first; keep every test green.
+```
+
+**Build Step 5 (Groq LLM) — decisions already locked**
+```
+Continue FieldFlow. Working dir C:\Users\hp\Desktop\RCS-VONAGE-POC. Read in order: CLAUDE.md (hard
+rules: plain teaching style, plan-first, wait for my go, surface my action items + junior delegation,
+end with What I achieved / What I need from you / Next steps, playbook.md is the command home);
+docs/specs/field-service-recovery/handoff-fieldflow.md (LATEST block first); build-step-5.md (the full
+Step 5 plan + locked decisions); build-step-4.md; testing-guide.md; playbook.md.
+
+State: Spine + Step 1 + Step 2 + §3 + Step 4 (RAG, LIVE-VERIFIED) are shipped and green
+(cd apps/orchestrator && uv run pytest -q → 28 passed; uv run ruff check . clean). Step 5 is DECIDED,
+not built: Groq llama-3.3-70b-versatile proposer; fallback ladder Groq → Gemini gemini-2.5-flash →
+deterministic; evidence-weighted confidence (5 weighted factors, LLM clamped so it can only lower not
+inflate, calibration test locks delay/parts→auto & complex→human); add deps groq + google-genai.
+GROQ_API_KEY + GEMINI_API_KEY already in .env (gitignored).
+
+OQ1–OQ5 are already ANSWERED in build-step-5.md (OQ1 = risk-tiering: calibrated score PLUS a hard
+ALWAYS_HUMAN_REASONS floor for safety_risk/warranty_dispute; OQ2 = all LLM + confidence knobs in .env;
+OQ3 native JSON mode; OQ4 temp 0.2; OQ5 approved to update context/02+06 after ship). Implement Step 5
+MOCK-FIRST in the task order there: config/deps → confidence.py + test_confidence.py → risk-tier floor
+in needs_human → proposer seam + deterministic fallback → groq.py → gemini.py → wire into
+generate_options → test_llm.py. Keep the 28 tests green with a fake proposer (offline). Do NOT run a
+live Groq call or add deps until I give the go. Follow plan-first + explain-and-wait. Update
+playbook.md + build-step-5.md Explanation in the same change.
 ```
 
 **Demo the reason variants over HTTP (the §3 gap)**

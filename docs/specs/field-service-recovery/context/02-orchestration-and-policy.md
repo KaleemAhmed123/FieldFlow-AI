@@ -88,6 +88,30 @@ price authority. Idempotency is enforced one level up, at the event.
 The AI may generate an option that looks great and is illegal (wrong skill, outside SLA). Policy
 removes it **before** the customer ever sees it. The customer is only ever offered valid options.
 
+## Confidence — evidence-weighted, with a risk-tier floor (Step 5)
+
+The confidence that drives the human gate is **not a single number the LLM invents** (that's
+un-auditable and gameable). It's a weighted blend of five checkable factors:
+
+| Factor | Weight | What it measures |
+|--------|-------:|------------------|
+| archetype prior | 0.40 | how hard the reason is (easy delay → 1.0, complex → 0.40) |
+| policy headroom | 0.20 | how much legal room validation left (APPROVED/PARTIAL/DENIED) |
+| grounding | 0.15 | strength of the retrieved knowledge (RAG) |
+| data completeness | 0.10 | fraction of key case fields present |
+| LLM self-rating | 0.15 | the model's own score, **clamped to `min(self, prior)`** |
+
+The clamp is the point: the LLM can **lower** confidence but never **inflate** it past what the
+job's difficulty warrants, so it can't brag a risky case past the gate. The blend is computed in
+`policy_validate` (it needs the headroom factor, which only exists after validation). The full
+breakdown rides in the decision trace, so the panel can explain *why* a number is what it is.
+
+**Risk-tiering (the gate):** a human is required when **any** of — the reason is on the hard floor
+`ALWAYS_HUMAN_REASONS` (`safety_risk`, `warranty_dispute`) · confidence `< 0.7` · policy `DENIED`.
+The floor means a safety/legal case is **never** auto-approved on a model's confidence, regardless
+of score — how real systems tier decisions. Everything (weights, threshold, floor list) is
+env-tunable; a calibration test locks the routing contract (delay/parts → auto, complex → human).
+
 ## Every mutation (the invariant that makes this enterprise-grade)
 
 ```

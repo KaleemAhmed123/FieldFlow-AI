@@ -58,7 +58,7 @@ complex billing engine · real production payments.
 
 | # | Open question | Leaning | Settle by |
 |---|---------------|---------|-----------|
-| O1 | LLM provider / model | **DECIDED** — **both Groq and Gemini free behind one switch** (`LLM_PROVIDER`). Benchmark which model later. Note: free tiers have rate limits. | — |
+| O1 | LLM provider / model | **DECIDED + BUILT (Step 5)** — fixed fallback ladder **Groq `openai/gpt-oss-120b` → Gemini `gemini-flash-latest` → deterministic** (not a switch; a provider is live if its key is set). Confidence is **evidence-weighted** (5 factors; LLM clamped so it can only lower, never inflate) with a **risk-tier floor** (`ALWAYS_HUMAN_REASONS`) — see [`context/02`](02-orchestration-and-policy.md). Free-tier model ids drift — verify per account. | — |
 | O2 | Repo shape | **DECIDED** — monorepo: orchestrator (Python, **commerce as a module**) · control-panel (React) · contract package · infra. Scaffold a **thin spine first** (walking skeleton), then thicken. | — |
 | O3 | How much of the demo control panel is real vs scripted | **DECIDED** — comprehensive, UI-rich; real state, real triggers; no faked telemetry | — |
 | O4 | Reconciliation depth for the DLQ demo | Enough to show replay + resolve, not a full engine | P4 |
