@@ -21,6 +21,8 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any
 
+from app.commerce.razorpay import PaymentGateway
+from app.commerce.service import CommerceService
 from app.policy import TERMINAL_STATES
 from app.tools.inventory import InventoryTools
 from app.tools.salesforce import SalesforceTools
@@ -78,12 +80,21 @@ class Toolbox:
         ]
 
 
-def build_toolbox(salesforce: SalesforceTools, inventory: InventoryTools) -> Toolbox:
+def build_toolbox(
+    salesforce: SalesforceTools,
+    inventory: InventoryTools,
+    commerce: CommerceService | None = None,
+    gateway: PaymentGateway | None = None,
+) -> Toolbox:
     """Register the Step-2 surface over the fakes. camelCase tool args (the contract) → the
     pythonic fake methods via thin adapters. Action tools run the ladder here, in the tool layer.
 
-    Deferred seams (named, not built): knowledge.* (RAG step); commerce.* + workorder.close
-    (commerce step); reschedule.propose (today it's generate_options + policy_validate).
+    `commerce` + `gateway` (Step 6) are optional: when both are passed, the commerce.* action tools
+    are registered over the price authority + the payment gateway. Omit them (older callers/tests)
+    and the surface is exactly the Step-2 one.
+
+    Deferred seams (named, not built): knowledge.* (RAG step); workorder.close;
+    reschedule.propose (today it's generate_options + policy_validate).
     """
     tb = Toolbox()
 
@@ -145,5 +156,73 @@ def build_toolbox(salesforce: SalesforceTools, inventory: InventoryTools) -> Too
         args=["appointmentId", "slotId"],
         description="Apply a chosen slot after the ladder. Refuses on unknown/terminal case.",
     )
+
+    # --- Commerce action tools (Step 6; only if a price authority + gateway were wired) ---------
+    # Every one is a MUTATION that climbs the ladder in the tool layer (price authority / amount
+    # check / gateway call) and returns a ToolResult that may refuse. Idempotency + audit + emit
+    # stay in the service layer, so the graph nodes calling these stay DB-free.
+    if commerce is not None and gateway is not None:
+        def create_quote(workOrderId: str, partNo: str) -> ToolResult:
+            # Price authority: the amount is computed from the book, never from the LLM.
+            quote = commerce.build_quote(workOrderId, partNo)
+            if quote["amountPaise"] <= 0:
+                return ToolResult(ok=False, reason="quote amount must be positive")
+            return ToolResult(ok=True, data=quote)
+
+        tb.register(
+            "commerce.create_quote", "action", create_quote,
+            args=["workOrderId", "partNo"],
+            description="Price a chargeable part + labour into a quote (price book is authority).",
+        )
+
+        def create_order(quote: dict) -> ToolResult:
+            if not quote or quote.get("amountPaise", 0) <= 0:
+                return ToolResult(ok=False, reason="cannot order a non-positive quote")
+            return ToolResult(ok=True, data=commerce.create_order(quote))
+
+        tb.register(
+            "commerce.create_order", "action", create_order,
+            args=["quote"], description="Turn an approved quote into an order (precedes payment).",
+        )
+
+        def create_payment_link(orderId: str, amountPaise: int, currency: str) -> ToolResult:
+            if amountPaise <= 0:
+                return ToolResult(ok=False, reason="payment amount must be positive")
+            link = gateway.create_payment_link(orderId, amountPaise, currency)
+            return ToolResult(ok=True, data=link)
+
+        tb.register(
+            "commerce.create_payment_link", "action", create_payment_link,
+            args=["orderId", "amountPaise", "currency"],
+            description="Create a Razorpay payment link for an order (→ RCS Open-URL).",
+        )
+
+        def capture_payment(
+            paymentRef: str, amountPaise: int, reportedStatus: str = "captured"
+        ) -> ToolResult:
+            # The gateway is the authority on the outcome: the fake honours reportedStatus; the real
+            # gateway polls Razorpay (ignores it). Idempotent → a repeat never double-charges.
+            receipt = gateway.capture(paymentRef, amountPaise, reportedStatus)
+            if receipt.get("status") != "captured":
+                return ToolResult(ok=False, reason=f"payment {receipt.get('status')}", data=receipt)
+            return ToolResult(ok=True, data=receipt)
+
+        tb.register(
+            "commerce.capture_payment", "action", capture_payment,
+            args=["paymentRef", "amountPaise"],
+            description="Capture/verify a payment. Idempotent — a repeat never charges twice.",
+        )
+
+        def refund(paymentId: str) -> ToolResult:
+            result = gateway.refund(paymentId)
+            if result.get("status") != "refunded":
+                return ToolResult(ok=False, reason=result.get("reason", "refund failed"))
+            return ToolResult(ok=True, data=result)
+
+        tb.register(
+            "commerce.refund", "action", refund,
+            args=["paymentId"],
+            description="Refund a captured payment (a human approves refunds). Idempotent.",
+        )
 
     return tb
