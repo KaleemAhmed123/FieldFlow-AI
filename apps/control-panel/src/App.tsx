@@ -1,90 +1,53 @@
 import { useEffect, useState } from "react";
-import { type CaseView, fireAtRisk, listCases } from "./api";
+
+import { CaseDetail } from "@/components/CaseDetail";
+import { CaseList } from "@/components/CaseList";
+import { OpsDock } from "@/components/OpsDock";
+import { TopBar } from "@/components/TopBar";
+import { TooltipProvider } from "@/components/ui/tooltip";
+import { useLiveCases } from "@/hooks/useLiveCases";
+import { statusMeta } from "@/lib/trace";
 
 export default function App() {
-  const [cases, setCases] = useState<CaseView[]>([]);
-  const [lastEventId, setLastEventId] = useState<string | null>(null);
+  const { data: cases = [], isLoading } = useLiveCases();
+  const [selectedId, setSelectedId] = useState<string | null>(null);
 
+  // Auto-select the most recent case so the stage never sits empty on load.
   useEffect(() => {
-    const tick = () => listCases().then(setCases).catch(() => {});
-    tick();
-    const t = setInterval(tick, 2000); // spine: poll. WebSocket live-updates come later.
-    return () => clearInterval(t);
-  }, []);
+    if (!selectedId && cases.length > 0) setSelectedId(cases[0].correlationId);
+  }, [cases, selectedId]);
 
-  async function fireNew() {
-    const id = `evt_${Date.now()}`;
-    setLastEventId(id);
-    await fireAtRisk(id);
-  }
+  const selected = cases.find((c) => c.correlationId === selectedId);
+  const activeStage = selected ? statusMeta(selected.status).stage : undefined;
 
   return (
-    <div className="mx-auto max-w-5xl p-6">
-      <header className="mb-6">
-        <h1 className="text-2xl font-bold">FieldFlow AI — Field Service Control Center</h1>
-        <p className="text-sm text-slate-500">
-          Thin spine: fire an at-risk appointment, watch the case recover through the pipeline.
-        </p>
-      </header>
+    <TooltipProvider delayDuration={200}>
+      <div className="flex h-screen flex-col overflow-hidden bg-bg text-fg">
+        <TopBar activeStage={activeStage} />
 
-      <div className="mb-6 flex items-center gap-3">
-        <button
-          onClick={fireNew}
-          className="rounded-lg bg-indigo-600 px-4 py-2 font-medium text-white hover:bg-indigo-700"
-        >
-          Simulate technician delay (fire at-risk)
-        </button>
-        {lastEventId && (
-          <button
-            onClick={() => fireAtRisk(lastEventId)}
-            className="rounded-lg border border-slate-300 px-4 py-2 text-sm hover:bg-slate-100"
-            title="Re-send the same eventId to prove idempotency"
-          >
-            Re-fire same event (idempotency)
-          </button>
-        )}
-      </div>
+        <div className="min-h-0 flex-1 overflow-y-auto xl:overflow-hidden">
+          <div className="xl:grid xl:h-full xl:grid-cols-[300px_1fr_360px]">
+            <aside className="h-72 border-b border-border bg-surface/40 xl:h-full xl:border-b-0 xl:border-r">
+              <CaseList
+                cases={cases}
+                selectedId={selectedId}
+                onSelect={setSelectedId}
+                loading={isLoading}
+              />
+            </aside>
 
-      {cases.length === 0 && (
-        <p className="text-slate-400">No cases yet. Fire an event above.</p>
-      )}
+            <main className="h-[76vh] xl:h-full">
+              <CaseDetail c={selected} />
+            </main>
 
-      <div className="space-y-4">
-        {cases.map((c) => (
-          <div key={c.correlationId} className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
-            <div className="mb-2 flex items-center justify-between">
-              <span className="font-mono text-sm text-slate-500">{c.correlationId}</span>
-              <span className="rounded-full bg-emerald-100 px-3 py-1 text-xs font-semibold text-emerald-700">
-                {c.status}
-              </span>
-            </div>
-
-            {c.sentCard && (
-              <div className="mb-3">
-                <p className="mb-1 text-sm font-medium text-slate-700">📲 Sent to customer (RCS):</p>
-                <div className="rounded-lg bg-slate-50 p-3">
-                  <p className="mb-2 text-sm font-semibold">{c.sentCard.title}</p>
-                  <div className="flex flex-wrap gap-2">
-                    {c.sentCard.options.map((o) => (
-                      <div key={o.slotId} className="rounded-lg border border-slate-300 bg-white px-3 py-2 text-xs">
-                        <div className="font-semibold">{o.label}</div>
-                        <div className="text-slate-500">{o.technician} · {o.note}</div>
-                      </div>
-                    ))}
-                  </div>
-                </div>
+            <aside className="border-t border-border bg-surface/40 xl:h-full xl:border-l xl:border-t-0">
+              <div className="h-[80vh] xl:h-full">
+                <OpsDock selected={selected} />
               </div>
-            )}
-
-            <details className="text-xs text-slate-600">
-              <summary className="cursor-pointer font-medium">AI decision trace</summary>
-              <pre className="mt-2 overflow-x-auto rounded bg-slate-900 p-3 text-slate-100">
-                {JSON.stringify(c.decisionTrace, null, 2)}
-              </pre>
-            </details>
+            </aside>
           </div>
-        ))}
+        </div>
       </div>
-    </div>
+    </TooltipProvider>
   );
 }
