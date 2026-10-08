@@ -17,5 +17,14 @@ class Settings(BaseSettings):
     rabbitmq_url: str = "amqp://guest:guest@localhost:5672/"
     panel_origin: str = "http://localhost:5173"
 
+    # RAG (build step 4). Empty jina key → the live pgvector store is unavailable; tests use the
+    # in-memory fake either way. Corpus path is relative to the orchestrator app dir.
+    jina_api_key: str = ""
+    jina_model: str = "jina-embeddings-v3"
+    jina_reranker: str = "jina-reranker-v1-base-en"
+    embedding_dim: int = 1024
+    knowledge_corpus_dir: str = "app/rag/corpus"
+    retrieval_k: int = 3
+
 
 settings = Settings()
