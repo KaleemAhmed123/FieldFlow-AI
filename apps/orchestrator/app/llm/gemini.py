@@ -28,4 +28,4 @@ def gemini_propose(settings, reason: str, context: dict, knowledge: list) -> Pro
             response_schema=PROPOSAL_SCHEMA,
         ),
     )
-    return parse_proposal(resp.text, "gemini", reason)
+    return parse_proposal(resp.text, "gemini", reason, context)

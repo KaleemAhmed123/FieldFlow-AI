@@ -35,4 +35,4 @@ def groq_propose(settings, reason: str, context: dict, knowledge: list) -> Propo
             except ValueError:
                 retry_after = None
         raise RateLimited(retry_after) from exc
-    return parse_proposal(resp.choices[0].message.content, "groq", reason)
+    return parse_proposal(resp.choices[0].message.content, "groq", reason, context)

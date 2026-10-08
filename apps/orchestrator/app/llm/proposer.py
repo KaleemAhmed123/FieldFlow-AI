@@ -13,9 +13,17 @@ import json
 from collections.abc import Callable
 from dataclasses import dataclass, field
 
+from app.data.catalog import model_for_asset
 from app.logging import get_logger
 
 log = get_logger("proposer")
+
+
+def _asset_parts(context: dict) -> list[dict]:
+    """The catalog parts for the asset in context (empty if the model isn't in the catalog)."""
+    model_name = (context or {}).get("asset", {}).get("model", "")
+    m = model_for_asset(model_name) if model_name else None
+    return m["parts"] if m else []
 
 # Ten realistic at-risk reasons collapse to three behaviour archetypes. Only the archetype drives
 # the proposer + the confidence prior; the extra labels are demo variety (a real SF event carries
@@ -125,17 +133,26 @@ def build_prompt(reason: str, context: dict, knowledge: list) -> tuple[str, str]
     cites = "\n".join(
         f"- {k.get('source')} {k.get('locator')}: {k.get('snippet')}" for k in (knowledge or [])
     ) or "(no knowledge retrieved)"
+    parts = _asset_parts(context)
+    parts_list = "\n".join(
+        f"- {p['partNo']}: {p['name']}" + (" (scarce)" if p.get("scarce") else "") for p in parts
+    ) or "(no catalog parts for this asset)"
     system = (
         "You are a field-service recovery assistant. Propose appointment options to recover an "
         "at-risk job. You ONLY propose; a deterministic policy engine validates and may reject "
         "every option, and a human approves risky ones. Rate your confidence [0,1] honestly - a "
-        "complex or poorly-grounded job should score low. Reply ONLY as JSON matching the schema."
+        "complex or poorly-grounded job should score low.\n"
+        "RULES: (1) For a 'delay' archetype the fix is purely rescheduling - NEVER attach a part "
+        "(omit partNo on every option). (2) If a part is genuinely needed, use ONLY a partNo from "
+        "the asset's catalog parts listed below - never invent one. (3) Prefer options that do not "
+        "depend on a scarce part. Reply ONLY as JSON matching the schema."
     )
     user = (
         f"Reason: {reason} (archetype: {archetype})\n"
         f"Customer asset: {context.get('asset', {})}\n"
         f"Technician: {context.get('technician', {})}\n"
         f"SLA window (min): {context.get('slaWindowMinutes')}\n"
+        f"Asset catalog parts (the ONLY valid part numbers):\n{parts_list}\n"
         f"Retrieved knowledge:\n{cites}\n\n"
         f"Suggested options to refine:\n{json.dumps(seed.options)}\n"
         "Return JSON: {options:[{slotId,label,technician,note,requiredSkill?,partNo?}], "
@@ -144,18 +161,30 @@ def build_prompt(reason: str, context: dict, knowledge: list) -> tuple[str, str]
     return system, user
 
 
-def parse_proposal(raw: str | dict, provider: str, reason: str) -> Proposal:
+def parse_proposal(
+    raw: str | dict, provider: str, reason: str, context: dict | None = None
+) -> Proposal:
     """Parse a provider's JSON into a strict Proposal. Raises ValueError on anything unusable so
-    the ladder falls through to the next rung."""
+    the ladder falls through to the next rung.
+
+    Grounding is ENFORCED here, not just asked for in the prompt: a 'delay' never carries a part,
+    and any partNo the model invents that isn't in the asset's catalog is stripped. Policy then
+    still validates stock/skill on whatever survives — the model can never smuggle in authority."""
     data = json.loads(raw) if isinstance(raw, str) else raw
     options = data.get("options")
     if not isinstance(options, list) or not options:
         raise ValueError("no options in LLM output")
+    archetype = REASON_ARCHETYPE.get(reason, "delay")
+    valid_parts = {p["partNo"] for p in _asset_parts(context or {})}
     clean: list[dict] = []
     for o in options:
         if not (o.get("slotId") and o.get("label") and o.get("technician")):
             raise ValueError("option missing required keys")
-        clean.append({k: v for k, v in o.items() if v is not None})
+        item = {k: v for k, v in o.items() if v is not None}
+        part = item.get("partNo")
+        if part and (archetype == "delay" or (valid_parts and part not in valid_parts)):
+            item.pop("partNo", None)  # ground out: delay needs no part; unknown parts are invented
+        clean.append(item)
     conf = float(data.get("confidence", 0.0))
     return Proposal(
         options=clean, llm_confidence=max(0.0, min(1.0, conf)),
