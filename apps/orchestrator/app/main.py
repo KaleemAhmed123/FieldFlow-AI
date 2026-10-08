@@ -14,6 +14,8 @@ from fieldflow_contract import AppointmentAtRisk
 
 from app.api.routes import router as api_router
 from app.commerce import router as commerce_router
+from app.commerce.razorpay import build_gateway
+from app.commerce.service import CommerceService
 from app.config import settings
 from app.db.session import dispose_db, get_sessionmaker, init_db
 from app.graph.build import build_graph
@@ -27,7 +29,8 @@ from app.sim.routes import router as sim_router
 from app.tools.inventory import FakeInventory
 from app.tools.registry import build_toolbox
 from app.tools.salesforce import FakeSalesforce
-from app.tools.vonage import FakeVonage
+from app.tools.vonage import build_vonage
+from app.webhooks import router as webhooks_router
 
 log = get_logger("main")
 
@@ -38,12 +41,22 @@ async def lifespan(app: FastAPI):
     await init_db()
     # Mockable tools + the compiled graph: built once so paused cases resume on the same
     # checkpointer. Swap the fakes / checkpointer for real ones in a later step.
-    app.state.vonage = FakeVonage()
+    # Vonage RCS (Step 9b): real send is armed only when key+secret+agent_id+test_to are all set
+    # (else FakeVonage) — the one swap line. Inbound/status taps arrive at /webhooks/* (real) or
+    # /sim/* (offline twin); both resume the same case.
+    app.state.vonage = build_vonage(settings)
     app.state.salesforce = FakeSalesforce()
     app.state.inventory = FakeInventory()
+    # Commerce (Step 6/9): the price authority + the payment gateway. build_gateway returns
+    # FakeRazorpay unless a Razorpay TEST key is set (then the real Test-Mode gateway) — the one
+    # swap line. A non-test key aborts the boot (POC is Test-Mode only).
+    app.state.commerce = CommerceService(settings.commerce_labour_paise, settings.commerce_currency)
+    app.state.razorpay = build_gateway(settings)
     # The Toolbox is the controlled MCP-shaped surface over the fakes; the graph only ever calls
     # tools through it. Swapping in a real MCP client later touches only this line.
-    app.state.toolbox = build_toolbox(app.state.salesforce, app.state.inventory)
+    app.state.toolbox = build_toolbox(
+        app.state.salesforce, app.state.inventory, app.state.commerce, app.state.razorpay,
+    )
     # RAG store (real Jina+pgvector if a key is set, else the in-memory fake). The graph reads it
     # through the KnowledgeStore seam, so this is the only line that changes when creds land.
     app.state.knowledge = make_knowledge_store(settings)
@@ -90,3 +103,4 @@ app.add_middleware(
 app.include_router(api_router)
 app.include_router(sim_router)
 app.include_router(commerce_router)
+app.include_router(webhooks_router)

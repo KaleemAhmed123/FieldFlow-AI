@@ -18,6 +18,8 @@ dist/
 .env
 .env.*
 !.env.example
+*.key
+vonage_private.key
 
 # OS / editor
 .DS_Store

@@ -54,6 +54,29 @@ class Settings(BaseSettings):
     # Hard human-review floor (OQ1 risk-tiering): these reasons go to a human at ANY confidence.
     always_human_reasons: str = "safety_risk,warranty_dispute"
 
+    # Commerce + Razorpay (build step 6). Blank keys → FakeRazorpay (same convention as the LLM/
+    # Jina keys): unit tests + a keyless run stay fully offline. Money is integer PAISE everywhere
+    # (Razorpay's smallest unit — never float money). The price book is the amount authority and
+    # lives in code (app/commerce/service.py); only these knobs are env-tunable.
+    razorpay_key_id: str = ""
+    razorpay_key_secret: str = ""
+    commerce_currency: str = "INR"
+    commerce_labour_paise: int = 50000       # ₹500 labour added to every chargeable quote
+    commerce_high_value_paise: int = 500000  # quotes at/above ₹5,000 need a human (risk-tiering)
+
+    # Vonage RCS (build step 9b). Same blank-key convention: the real send is ARMED only when all of
+    # key+secret+agent_id AND a test recipient are set — so keys can sit in .env during offline dev
+    # without firing a real (billed) send. Send auth = Basic (api_key:api_secret); the signature
+    # secret verifies inbound webhooks (HMAC-SHA256, separate from the API secret). The application
+    # id + private key live on the Vonage side (agent + webhook config), not in our send call.
+    vonage_api_key: str = ""
+    vonage_api_secret: str = ""
+    vonage_application_id: str = ""          # for reference / dashboard wiring, not the send auth
+    vonage_rcs_agent_id: str = ""            # the `from` sender (RCS agent id)
+    vonage_test_to: str = ""                 # the one test Android number (E.164); arms real send
+    vonage_signature_secret: str = ""        # verifies inbound webhook JWTs (HS256); blank → skip
+    vonage_messages_url: str = "https://api.nexmo.com/v1/messages"
+
     @property
     def confidence_weights(self) -> dict[str, float]:
         return {
