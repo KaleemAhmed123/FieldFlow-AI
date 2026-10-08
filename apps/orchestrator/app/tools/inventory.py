@@ -16,12 +16,14 @@ class InventoryTools(Protocol):
 
 
 class FakeInventory:
-    """In-memory stock keyed by part number. `set_stock` is the demo/test knob."""
+    """In-memory stock keyed by part number, seeded from the product catalog (the single source of
+    truth). Scarce parts sit at qty 1 so the inventory race (NFR-5) can fire. `set_stock` is the
+    demo/test knob. Real Salesforce Field Service inventory swaps in behind the same two methods."""
 
-    def __init__(self) -> None:
-        self._stock: dict[str, list[dict]] = {
-            "CAP-492": [{"location": "Noida", "qty": 1}, {"location": "Delhi", "qty": 0}],
-        }
+    def __init__(self, stock: dict[str, list[dict]] | None = None) -> None:
+        from app.data.catalog import stock_seed
+
+        self._stock: dict[str, list[dict]] = stock if stock is not None else stock_seed()
 
     def find_part(self, part_no: str) -> list[dict]:
         return [dict(loc) for loc in self._stock.get(part_no, [])]
