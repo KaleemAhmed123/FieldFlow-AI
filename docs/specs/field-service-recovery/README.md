@@ -21,6 +21,7 @@ the real changes across Salesforce, inventory, commerce and payment.
 | [`roles.md`](roles.md) | Who builds what (not a wall), the Field Service setup checklist, and the **interface contract** both sides build against. | You're splitting work with the Salesforce dev. |
 | [`context/`](context/) | Project-context folder (7 dense, numbered files): the shared mental model of the system — overview, domain, orchestration, RAG+MCP, RCS, reliability, principles. | You want the dense "how it all fits" map. |
 | [`diagrams/`](diagrams/) | 3 rich Excalidraw diagrams: system architecture, customer journey, decision/authority flow. | You're presenting to your manager / Vonage. |
+| [`testing-guide.md`](testing-guide.md) | How to learn the system by testing it: every test mapped to the promise it guards + 10 scoped tests to add. | You're a new/junior dev, or writing a test. |
 
 ## The raw source
 
