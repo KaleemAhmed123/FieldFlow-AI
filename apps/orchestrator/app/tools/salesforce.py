@@ -52,12 +52,14 @@ class FakeSalesforce:
         self._customers: dict[str, dict] = {
             "CON-1": {"name": "Kaleem Ahmed", "phone": "+91-90000-00000"},
         }
+        # Asset models match the product catalog (app/data/catalog.json) so the proposer can ground
+        # on the asset's real parts. The canonical demo asset is the XYZ-492.
         self._assets: dict[str, dict] = {
-            "AST-1": {"model": "Daikin Inverter AC XYZ-492", "warranty": "active"},
-            "AST-OOW": {"model": "Daikin Inverter AC XYZ-492", "warranty": "expired"},
+            "AST-1": {"model": "Frostline Inverter Split AC XYZ-492", "warranty": "active"},
+            "AST-OOW": {"model": "Frostline Inverter Split AC XYZ-492", "warranty": "expired"},
         }
         self._technicians: dict[str, dict] = {
-            "SR-1": {"name": "Rahul Kumar", "skills": ["daikin-inverter"], "territory": "Noida"},
+            "SR-1": {"name": "Rahul Kumar", "skills": ["inverter-ac"], "territory": "Noida"},
         }
 
     def _guard(self) -> None:
