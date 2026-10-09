@@ -71,9 +71,10 @@ class Settings(BaseSettings):
     # id + private key live on the Vonage side (agent + webhook config), not in our send call.
     vonage_api_key: str = ""
     vonage_api_secret: str = ""
-    vonage_application_id: str = ""          # for reference / dashboard wiring, not the send auth
-    vonage_rcs_agent_id: str = ""            # the `from` sender (RCS agent id)
-    vonage_test_to: str = ""                 # the one test Android number (E.164); arms real send
+    vonage_application_id: str = ""          # RCS send auth: the app the JWT is signed for
+    vonage_private_key_path: str = ""        # path to the app's private.key (RS256); arms the send
+    vonage_rcs_agent_id: str = ""            # the `from` sender (RCS agent id, e.g. astrea_it)
+    vonage_test_to: str = ""                 # test device number, digits only, NO leading +
     vonage_signature_secret: str = ""        # verifies inbound webhook JWTs (HS256); blank → skip
     vonage_messages_url: str = "https://api.nexmo.com/v1/messages"
 

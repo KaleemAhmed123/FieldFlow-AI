@@ -36,26 +36,29 @@ def test_carousel_embeds_correlation_slot_version_and_caps_at_four():
     assert msg["channel"] == "rcs" and msg["from"] == "astrea_it_services"
     assert len(cards) == 4  # RCS allows at most 4 suggestions
     assert cards[0]["suggestions"][0]["postback_data"] == "WO-9|s0|2"
-    assert cards[0]["suggestions"][0]["type"] == "suggested_reply"
+    assert cards[0]["suggestions"][0]["type"] == "reply"
 
 
 def test_payment_card_is_open_url_action():
     card = Card(kind="payment", title="Approve & Pay ₹3,700", payUrl="https://rzp.io/i/x")
-    sugg = card_to_rcs("+919000000000", card, "agent", "WO-9")["card"]["suggestions"][0]
-    assert sugg["type"] == "suggested_action" and sugg["url"] == "https://rzp.io/i/x"
+    sugg = card_to_rcs("916394493446", card, "agent", "WO-9")["card"]["suggestions"][0]
+    assert sugg["type"] == "action" and sugg["url"] == "https://rzp.io/i/x"
 
 
 # --- build_vonage arming -------------------------------------------------------------------------
-def test_build_vonage_fake_unless_fully_armed(monkeypatch):
-    for key in ("vonage_api_key", "vonage_api_secret", "vonage_rcs_agent_id", "vonage_test_to"):
+def test_build_vonage_fake_unless_fully_armed(monkeypatch, tmp_path):
+    for key in ("vonage_application_id", "vonage_private_key_path",
+                "vonage_rcs_agent_id", "vonage_test_to"):
         monkeypatch.setattr(settings, key, "")
     assert isinstance(build_vonage(settings), FakeVonage)
-    # Keys present but no test recipient → still fake (a billed send must not arm by accident).
-    monkeypatch.setattr(settings, "vonage_api_key", "2b000002")
-    monkeypatch.setattr(settings, "vonage_api_secret", "secret")
-    monkeypatch.setattr(settings, "vonage_rcs_agent_id", "astrea_it_services")
+    # App id + key + agent present but no test recipient → still fake (no accidental billed send).
+    key_file = tmp_path / "private.key"
+    key_file.write_text("dummy-pem")
+    monkeypatch.setattr(settings, "vonage_application_id", "a391d76e")
+    monkeypatch.setattr(settings, "vonage_private_key_path", str(key_file))
+    monkeypatch.setattr(settings, "vonage_rcs_agent_id", "astrea_it")
     assert isinstance(build_vonage(settings), FakeVonage)
-    monkeypatch.setattr(settings, "vonage_test_to", "+919000000000")
+    monkeypatch.setattr(settings, "vonage_test_to", "916394493446")
     assert isinstance(build_vonage(settings), VonageMessagesClient)
 
 
