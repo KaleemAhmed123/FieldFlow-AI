@@ -37,6 +37,7 @@ def test_carousel_embeds_correlation_slot_version_and_caps_at_four():
     assert len(cards) == 4  # RCS allows at most 4 suggestions
     assert cards[0]["suggestions"][0]["postback_data"] == "WO-9|s0|2"
     assert cards[0]["suggestions"][0]["type"] == "reply"
+    assert cards[0]["media_url"].startswith("https://")  # RCS requires media on every card
 
 
 def test_payment_card_is_open_url_action():

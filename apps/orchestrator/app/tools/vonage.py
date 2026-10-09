@@ -14,6 +14,7 @@ import time
 import uuid
 from pathlib import Path
 from typing import Protocol
+from urllib.parse import quote
 
 from fieldflow_contract import Card
 
@@ -22,6 +23,15 @@ from app.logging import get_logger
 log = get_logger("vonage")
 
 MAX_SUGGESTIONS = 4  # Vonage RCS allows at most 4 suggestions per card.
+
+# RCS requires an image on every carousel card (a text-only card is a 422). Minimalist theme: dark
+# slate background, light text, the slot label rendered on it. Swap for a branded/hosted asset
+# later. ponytail: placeholder image service, fine for the POC; one line to change.
+CARD_MEDIA_BASE = "https://placehold.co/800x400/111827/f9fafb/png"
+
+
+def _card_media(label: str) -> str:
+    return f"{CARD_MEDIA_BASE}?text={quote(label)}"
 
 
 class VonageClient(Protocol):
@@ -74,12 +84,16 @@ def card_to_rcs(to: str, card: Card, agent_id: str, correlation_id: str) -> dict
     cards = [{
         "title": o.label[:200],
         "text": " · ".join(p for p in (o.technician, o.note) if p)[:2000],
+        "media_url": _card_media(o.label),  # RCS requires media on every carousel card
+        "media_height": "MEDIUM",           # required with media_url (SHORT|MEDIUM for carousel)
+        "media_description": o.label[:100],
         "suggestions": [{
             "type": "reply", "text": "Choose",
             "postback_data": f"{correlation_id}|{o.slotId}|{card.version}",
         }],
     } for o in card.options[:MAX_SUGGESTIONS]]
-    return {**base, "message_type": "carousel", "carousel": {"cards": cards}}
+    return {**base, "message_type": "carousel", "carousel": {"cards": cards},
+            "rcs": {"card_width": "MEDIUM"}}  # required for carousel; pairs with MEDIUM height
 
 
 class VonageMessagesClient:
