@@ -266,3 +266,28 @@ path for the tap, without breaking the offline test suite or the "AI proposes, p
   exposing the ngrok tunnel.
 - **One test device only** — the real client sends to `VONAGE_TEST_TO`, not a per-customer number
   (no real customer data in the POC).
+
+### 8. Live-fire — SHIPPED + verified on a real device (2026-10-09)
+
+The gated live send is now **done**: full loop proven on a real Android — AI proposes → policy
+approves → real RCS carousel delivered → customer taps a slot → signed webhook → case resumes →
+`CLOSED`. What we hit getting there (each was a distinct blocker):
+
+- **Auth: Basic → JWT.** RCS senders are tied to a Vonage *application*; Basic auth (api_key/secret)
+  returns `422`. Now signs a short-lived **RS256 JWT** with the application's private key (`pyjwt`).
+  Arming = `application_id` + `private_key_path` + `agent_id` + `test_to`.
+- **Card schema — three required fields.** Vonage rejected the carousel until every card had
+  **`media_url`** and **`media_height`**, plus the top-level **`rcs.card_width`**. Each `422` named
+  the next missing field (the loud response-body logging is what made this fast).
+- **Number format.** `to` is **digits-only, no `+`** — country code `91` replaces the trunk `0`
+  (`06306…` → `916306…`).
+- **Delivery needs a registered test device.** While the agent is in *testing*, Vonage accepts the
+  send (`202`) but only **delivers** to allow-listed test devices — an unlisted number silently
+  gets nothing.
+- **Inbound tap routing.** The tap returns via the **Inbound URL on the application** (NOT the RCS
+  agent builder). Once set, Vonage POSTs a signed JWT webhook; our HMAC+payload_hash check verifies
+  it and `parse_postback` reads `correlationId|slotId|version`.
+- **Card image is cosmetic.** The placeholder (`placehold.co`) may not render — Google RBM fetches
+  and validates media server-side. Swap for a hosted branded asset later; it does not affect the flow.
+- **Windows run.** Start with `uvicorn --reload` — uvicorn only selects the `SelectorEventLoop` that
+  psycopg3 (the Postgres checkpointer) needs when it runs with a reload subprocess.

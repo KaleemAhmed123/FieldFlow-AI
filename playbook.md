@@ -357,6 +357,22 @@ curl http://localhost:8000/cases/WO-LIVE   # the tap moved it past OPTIONS_SENT
 uv run pytest -q tests/test_vonage.py
 ```
 
+**Live-fire learnings (verified end-to-end on a real device 2026-10-09).** The checklist that
+actually gets a card delivered and the tap back — each was a real blocker we hit, in order:
+
+| Symptom | Cause | Fix |
+|---|---|---|
+| `422` on send | Basic auth | **JWT** (app id + `private.key`); `VONAGE_APPLICATION_ID` + `VONAGE_PRIVATE_KEY_PATH` |
+| `422 media_url / media_height required` | carousel cards need an image | set `media_url` + `media_height` on every card (done in `card_to_rcs`) |
+| `422 rcs.card_width required` | carousel needs card width | top-level `rcs.card_width` (done) |
+| `202` but **no card on phone** | number not an allow-listed **test device** | add the number as a test device on the agent; `to` is **digits only, no `+`** |
+| card arrives, **tap never resumes** | Inbound URL not set on the **application** | set Inbound+Status URL on the app (`VONAGE_APPLICATION_ID`), not the agent builder |
+| image area blank | Google RBM fetches/validates media itself | cosmetic — swap `CARD_MEDIA_BASE` for a hosted branded image; flow is unaffected |
+| server crashes on boot (Windows) | psycopg3 + ProactorEventLoop | run with `uvicorn --reload` (selector loop only set under the reload subprocess) |
+
+Golden rule we re-learned: **make the failure loud (log the response body + traceback) and read it
+before guessing.** Every 422 above named the exact next field.
+
 ## 3f. Failure demos: RCS→SMS fallback + Salesforce-down/DLQ (build step 7)
 
 *Two "things break, we degrade gracefully" demos.* Offline for tests; the DLQ land+replay needs
