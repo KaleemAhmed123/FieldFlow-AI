@@ -9,6 +9,7 @@ That is NFR-3 (Salesforce-down / retry / DLQ) wired in miniature.
 from __future__ import annotations
 
 import json
+import traceback
 from collections.abc import Awaitable, Callable
 
 import aio_pika
@@ -77,7 +78,8 @@ class Broker:
                 await handler(message.routing_key or "", body)
                 await message.ack()
             except Exception as exc:  # noqa: BLE001 — route failures to the DLQ, don't crash
-                log.error("broker.handler_failed", error=str(exc))
+                log.error("broker.handler_failed", error=str(exc),
+                          tb=traceback.format_exc())
                 await message.nack(requeue=False)  # → events.dlq
 
         await self._queue.consume(on_message)
