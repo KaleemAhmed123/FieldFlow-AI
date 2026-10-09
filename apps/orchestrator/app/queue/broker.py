@@ -34,6 +34,11 @@ class Broker:
         self._exchange: aio_pika.abc.AbstractExchange | None = None
         self._queue: aio_pika.abc.AbstractQueue | None = None
 
+    @property
+    def is_open(self) -> bool:
+        """True when the robust connection exists and isn't closed (read-only; for /health/deps)."""
+        return self._conn is not None and not self._conn.is_closed
+
     async def connect(self) -> None:
         self._conn = await aio_pika.connect_robust(self._url)
         self._channel = await self._conn.channel()

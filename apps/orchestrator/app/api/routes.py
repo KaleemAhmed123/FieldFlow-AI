@@ -7,8 +7,10 @@ from fastapi.responses import Response
 from prometheus_client import CONTENT_TYPE_LATEST, generate_latest
 from sqlalchemy import select
 
+from app.config import settings
 from app.db.models import Case
 from app.db.session import get_sessionmaker
+from app.health import check_deps
 
 router = APIRouter(tags=["api"])
 
@@ -21,6 +23,22 @@ async def health() -> dict:
 @router.get("/ready")
 async def ready() -> dict:
     return {"status": "ready"}
+
+
+@router.get("/health/deps")
+async def health_deps(request: Request, deep: bool = False) -> dict:
+    """Deep dependency health (build step 10): one call, every external dep's state. Cheap by
+    default (DB + queue only, zero third-party calls); `?deep=1` adds the real vendor pings
+    (groq/gemini models.list, jina reachability). Cached ~30s; never throws, never leaks keys."""
+    return await check_deps(
+        sessionmaker=get_sessionmaker(),
+        broker=request.app.state.broker,
+        vonage=request.app.state.vonage,
+        razorpay=request.app.state.razorpay,
+        settings=settings,
+        deep=deep,
+        ttl=settings.health_deps_cache_ttl_s,
+    )
 
 
 @router.get("/metrics")

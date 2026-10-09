@@ -77,6 +77,12 @@ class Settings(BaseSettings):
     vonage_signature_secret: str = ""        # verifies inbound webhook JWTs (HS256); blank → skip
     vonage_messages_url: str = "https://api.nexmo.com/v1/messages"
 
+    # Observability + the deep dependency-health route (build step 10). logfire_token was previously
+    # dropped by extra="ignore"; the health check needs to see if it's configured. The cache TTL
+    # (seconds) fronts /health/deps so a ~5s panel poll can't hammer deps or spend credit.
+    logfire_token: str = ""
+    health_deps_cache_ttl_s: float = 30.0
+
     @property
     def confidence_weights(self) -> dict[str, float]:
         return {
