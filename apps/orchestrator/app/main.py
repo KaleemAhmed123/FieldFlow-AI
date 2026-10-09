@@ -6,7 +6,16 @@ Flow proven here: sim publishes → RabbitMQ → this consumer → case_service 
 
 from __future__ import annotations
 
+import asyncio
+import sys
 from contextlib import asynccontextmanager
+
+# Windows only: psycopg3's async driver (the Postgres checkpointer) refuses the default
+# ProactorEventLoop. Select the SelectorEventLoop before uvicorn builds its loop. No-op on Linux,
+# where this deploys. ponytail: selector loop caps at 512 sockets / no subprocess — fine for a POC.
+if sys.platform == "win32":
+    asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
+
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
@@ -19,7 +28,7 @@ from app.commerce.service import CommerceService
 from app.config import settings
 from app.db.session import dispose_db, get_sessionmaker, init_db
 from app.graph.build import build_graph
-from app.graph.checkpointer import make_checkpointer
+from app.graph.checkpointer import checkpointer_scope
 from app.llm.proposer import build_proposer
 from app.logging import configure_logging, get_logger
 from app.queue.broker import Broker
@@ -63,33 +72,37 @@ async def lifespan(app: FastAPI):
     # The LLM proposer ladder (Groq -> Gemini -> deterministic). Built from settings: a provider is
     # only live if its key is set, so a keyless boot runs the deterministic proposer offline.
     app.state.proposer = build_proposer(settings)
-    app.state.graph = build_graph(
-        app.state.toolbox, app.state.vonage, app.state.knowledge,
-        checkpointer=make_checkpointer(), retrieval_k=settings.retrieval_k,
-        proposer=app.state.proposer,
-    )
+    # Durable checkpointer (Postgres on Supabase) so paused cases survive a restart; in-memory for
+    # SQLite/offline. Opened here for the app's lifetime — the graph is built inside the scope so it
+    # closes over the live saver, and setup() runs once before any case is processed.
+    async with checkpointer_scope(settings) as checkpointer:
+        app.state.graph = build_graph(
+            app.state.toolbox, app.state.vonage, app.state.knowledge,
+            checkpointer=checkpointer, retrieval_k=settings.retrieval_k,
+            proposer=app.state.proposer,
+        )
 
-    async def handle(routing_key: str, body: dict) -> None:
-        if body.get("event") == "appointment.at_risk":
-            event = AppointmentAtRisk(**body)
-            async with get_sessionmaker()() as session:
-                await case_service.handle_event(session, event, graph=app.state.graph)
-        else:
-            log.info("event.ignored", routing_key=routing_key)
+        async def handle(routing_key: str, body: dict) -> None:
+            if body.get("event") == "appointment.at_risk":
+                event = AppointmentAtRisk(**body)
+                async with get_sessionmaker()() as session:
+                    await case_service.handle_event(session, event, graph=app.state.graph)
+            else:
+                log.info("event.ignored", routing_key=routing_key)
 
-    broker = Broker(settings.rabbitmq_url)
-    try:
-        await broker.connect()
-        await broker.start_consuming(handle)
-        app.state.broker = broker
-    except Exception as exc:  # noqa: BLE001 — allow the API to run even if RabbitMQ is down
-        log.error("broker.unavailable", error=str(exc))
-        app.state.broker = None
+        broker = Broker(settings.rabbitmq_url)
+        try:
+            await broker.connect()
+            await broker.start_consuming(handle)
+            app.state.broker = broker
+        except Exception as exc:  # noqa: BLE001 — allow the API to run even if RabbitMQ is down
+            log.error("broker.unavailable", error=str(exc))
+            app.state.broker = None
 
-    yield
+        yield
 
-    if app.state.broker is not None:
-        await broker.close()
+        if app.state.broker is not None:
+            await broker.close()
     await dispose_db()
 
 

@@ -14,6 +14,7 @@ from __future__ import annotations
 
 from typing import Any
 
+from fastapi import HTTPException
 from fieldflow_contract import AppointmentAtRisk
 from langgraph.types import Command
 from sqlalchemy import select
@@ -162,6 +163,21 @@ async def resume_case(
     on an already-closed case. The gateway's idempotent capture is the second, independent guard.
     """
     correlation_id.set(correlation_id_)
+    config = {"configurable": {"thread_id": correlation_id_}}
+
+    # Guard every resume path (approve / reply / payment): if no saved state exists for this case,
+    # re-running the graph would re-enter load_case with an empty state and crash on state["event"]
+    # (the KeyError 500). This happens when the checkpoint was lost (a restart before the durable
+    # checkpointer) or pruned/expired. Fail cleanly instead — the case cannot be resumed.
+    snapshot = await graph.aget_state(config)
+    if not snapshot.values:
+        log.info("resume.no_checkpoint", correlationId=correlation_id_)
+        raise HTTPException(
+            status_code=409,
+            detail="Cannot resume: this case's paused state was lost or expired. Start a fresh "
+                   "case.",
+        )
+
     if idempotency_key is not None:
         if await session.get(IdempotencyKey, idempotency_key):
             telemetry.events_duplicate.inc()
@@ -173,7 +189,6 @@ async def resume_case(
                     "correlationId": correlation_id_}
         session.add(IdempotencyKey(key=idempotency_key))
 
-    config = {"configurable": {"thread_id": correlation_id_}}
     result = await graph.ainvoke(Command(resume=payload), config)
 
     status = await _persist(session, correlation_id_, result)
