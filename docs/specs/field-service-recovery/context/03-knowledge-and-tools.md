@@ -50,13 +50,31 @@ the Daikin XYZ-492 service manual and warranty policy v4."*
 
 ## Part B — Tools (MCP)
 
-> **Built in Step 2 (2026-10-08, mock-first) — see [`../build-step-2.md`](../build-step-2.md).**
-> The read/action surface below is live as an **in-process `Toolbox`** (`app/tools/registry.py`)
-> over the fakes: granular Salesforce reads compose the context, `inventory.reserve` and
-> `reschedule.confirm` are action tools that run the authority ladder and can refuse, and the
-> decision trace's `toolsUsed` is real. `GET /tools` exposes the surface. It is MCP-*shaped*, not
-> the wire protocol yet — a real hosted MCP client swaps into `build_toolbox()` at Step 9.
-> `knowledge.*`, `workorder.close` and `reschedule.propose` are named seams, not built.
+> **DECISION (2026-10-10): MCP becomes REAL (was MCP-shaped).** An audit found layer 5 was claimed
+> but never built as the protocol — only an in-process `Toolbox`. We're making it real, because a new
+> requirement needs genuine agentic tool-use (below). This replaces the earlier "MCP-shaped is enough"
+> stance; the Toolbox stays as the deterministic pipeline's local surface, and a **real MCP client**
+> is added for the agentic path. Spec: [`../build-step-12-real-mcp-and-observability.md`](../build-step-12-real-mcp-and-observability.md).
+>
+> **Why real MCP now earns its place** (it didn't, for a purely deterministic pipeline):
+> 1. **Admin copilot** — an open-ended panel chat over SF + e-com; the LLM must *discover and pick*
+>    tools by description → the exact job of MCP.
+> 2. **Two+ backends, one protocol** — SF Hosted MCP + an e-com MCP server + future servers, one client.
+> 3. **Reusable tool servers** — any MCP client (copilot, Claude, Cursor, Agentforce) can use them.
+> 4. **Permission-respecting** — SF Hosted MCP enforces org security; the agent can't exceed its rights.
+> 5. **Scales with tool count** — a discoverable registry beats stuffing N APIs in a prompt.
+>
+> **Two modes, kept apart (the guardrail):**
+> - **Deterministic pipeline** (recovery flow): the graph calls tools by name; policy decides;
+>   mutations run the authority ladder. Backed by **Apex REST** (`apps/salesforce-apex/`) — no LLM
+>   tool-selection, no MCP needed on the mutation path.
+> - **Agentic copilot** (admin chat): a real **MCP client** over **SF Hosted MCP** + the **e-com MCP
+>   server**. Reads flow freely; any **write stays human-confirmed** (never an unsupervised LLM mutation).
+>
+> **Prior build state (unchanged):** the read/action surface is live as an in-process `Toolbox`
+> (`app/tools/registry.py`) over the fakes — granular reads, `inventory.reserve` / `reschedule.confirm`
+> as ladder-running action tools, real `toolsUsed`, `GET /tools`. `knowledge.*`, `workorder.close`,
+> `reschedule.propose` are named seams, not built.
 >
 > **Commerce tools built in Step 6 (2026-10-08, mock-first) — see [`../build-step-6.md`](../build-step-6.md).**
 > `commerce.create_quote`, `commerce.create_order`, `commerce.create_payment_link`,
@@ -67,8 +85,10 @@ the Daikin XYZ-492 service manual and warranty policy v4."*
 ### What it solves
 
 Instead of stuffing 50 raw APIs into a prompt, we expose business systems as a **small, controlled
-tool surface**. Salesforce ships Hosted MCP servers free in Developer Edition; we also wrap
-inventory and commerce as MCP tools. The graph reasons over this surface.
+tool surface**. Salesforce ships **Hosted MCP servers** free in Developer Edition (we use that for
+SF reads, per the 2026-10-10 decision above); the **e-com inventory** gets its own small MCP server.
+The deterministic pipeline reasons over the in-process Toolbox; the **admin copilot** is the real MCP
+client over these servers.
 
 ### The split that matters: read vs action
 

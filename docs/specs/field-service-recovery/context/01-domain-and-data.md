@@ -7,14 +7,20 @@
 
 ## The one rule
 
-**Salesforce Field Service is the system of record for the domain. PostgreSQL is the system of
-record for the *conversation and the AI*.** If a fact is about the business (who, what asset,
-which appointment, how much stock), it lives in Salesforce. If a fact is about *this recovery
-case* (what we asked the customer, what we decided, what we already processed), it lives in our
-Postgres.
+**Three systems of record, no overlap (Decision A, 2026-10-10):**
+- **Salesforce Field Service** owns the **service domain** — customer, asset, warranty,
+  appointment, technician.
+- **The e-com inventory service** owns **product data** — image, price, stock.
+- **Our PostgreSQL** owns the **conversation and the AI** — what we asked, what we decided, what we
+  already processed.
+
+If a fact is about the service visit (who, what asset, which appointment) it's Salesforce's. If it's
+about a product (image, price, how much stock) it's the e-com's. If it's about *this recovery case*
+(the options we sent, the version, the decision trace) it's ours.
 
 Mixing these up is the most likely early design mistake. A "current appointment time" is
-Salesforce's. A "we sent the customer 3 slot options at 09:30 and they haven't replied" is ours.
+Salesforce's. A "PCB-492 costs ₹4,800 and 7 are in Noida" is the e-com's. A "we sent the customer 3
+slot options at 09:30 and they haven't replied" is ours.
 
 ## Salesforce Field Service — the objects we actually use
 
@@ -35,14 +41,26 @@ Ignore the rest of the (large) Field Service model; this is our working set.
 | `ServiceContract` + `WarrantyTerm` | Is the repair covered? (free vs paid path) |
 | `ServiceReport` | The completion document → becomes the PDF sent over RCS. |
 
-### Inventory (also Salesforce — no separate store)
+### Inventory — a SEPARATE e-com source (Decision A, 2026-10-10)
 
-| Object | Role |
+> **Changed 2026-10-10.** Inventory was previously documented as living in Salesforce Field Service.
+> **Decision A** moves it to a **separate e-com inventory service** that owns **product image +
+> price + stock**; Salesforce owns only the service domain (appointment, asset, customer,
+> technician, warranty). Salesforce FS *does* have an inventory model (`ProductItem`/`Location`), so
+> this is a deliberate design choice, not a capability gap — it matches the real-world shape where
+> stock lives in a commerce/ERP system, and it matches the code, where [`inventory.py`] is already a
+> seam separate from [`salesforce.py`]. The e-com build (admin dashboard, no customer storefront) is
+> a real Node/Postgres service, swapped in behind the `InventoryTools` seam. Stack/host TBD.
+
+| Concept (in the e-com source) | Role |
 |--------|------|
-| `Product2` | The part type (PCB-492). |
-| `ProductItem` | Stock of a part **at a location** (Noida depot: 7). |
-| `Location` | Depot / technician van. |
-| `ProductItemTransaction` · `ProductTransfer` · `ProductConsumed` · `ProductRequest` | Stock movement + consumption that updates inventory. |
+| Product | The part type (PCB-492) — carries **image URL + price (paise) + warranty-covered flag**. |
+| Stock at location | Quantity of a part **at a location** (Noida depot: 7). |
+| Location | Depot / technician van. |
+| Reservation (atomic) | The `reserve` action decrements stock under a check — no oversell (NFR-5). |
+
+The orchestrator never talks to this store directly — only through the `InventoryTools` seam
+(`find_part` read, `reserve` action), today `FakeInventory`, later the e-com HTTP API.
 
 Demo stock (all fake):
 
@@ -69,19 +87,22 @@ case) — the one tenancy key that scopes every case-related record in the syste
 through RabbitMQ, LangGraph, every MCP tool call, every message and every audit row. If you can't
 answer "which case does this belong to?" you're missing the correlation id.
 
-## How the two stores meet
+## How the stores meet
 
 ```
-Salesforce (truth about the business)  ──MCP read tools──▶  LangGraph (holds case state in Postgres)
-         ▲                                                          │
-         └────────────── MCP action tools (validated) ─────────────┘
+Salesforce (service domain) ─┐
+                             ├─MCP read tools──▶  LangGraph (holds case state in Postgres)
+e-com (product + stock)    ──┘                          │
+         ▲                                              │
+         └────────────── MCP action tools (validated) ──┘
                          every mutation → emit event → audit row
 ```
 
-- The graph **reads** Salesforce through MCP read tools when it needs current business facts (it
-  does not cache them as truth).
-- The graph **writes** to Salesforce only through MCP action tools, which run the authority
-  ladder first (see [`02-orchestration-and-policy.md`](02-orchestration-and-policy.md)).
+- The graph **reads** Salesforce (appointment/asset/customer/technician) and the e-com (product
+  image/price/stock) through MCP read tools when it needs current facts — it does not cache them as
+  truth.
+- The graph **writes** (reschedule → Salesforce, reserve → e-com) only through MCP action tools,
+  which run the authority ladder first (see [`02-orchestration-and-policy.md`](02-orchestration-and-policy.md)).
 
 ## Things that will look one way but aren't
 
@@ -95,4 +116,5 @@ Salesforce (truth about the business)  ──MCP read tools──▶  LangGraph 
 
 ---
 
-*Last updated 2026-10-07 — kept in sync with the code as it lands.*
+*Last updated 2026-10-10 — Decision A: inventory moved to a separate e-com source (image + price +
+stock); Salesforce owns the service domain only.*

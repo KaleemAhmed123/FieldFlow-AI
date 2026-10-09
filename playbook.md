@@ -84,7 +84,13 @@ curl http://localhost:8000/health        # {"status":"ok"}  — cheap liveness, 
 curl http://localhost:8000/tools         # the controlled tool surface (reads vs actions)  ← Step 2
 curl http://localhost:8000/health/deps   # deep dep health (cheap: DB+queue only)           ← Step 10
 curl "http://localhost:8000/health/deps?deep=1"  # + real vendor pings (groq/gemini models.list, jina HEAD)
+curl "http://localhost:8000/reconcile?older_than_minutes=30"  # Step 12: non-terminal cases stuck >30m (read-only)
 ```
+
+> **Logfire (god-eye view, Step 12):** wired in `main.py` — set `LOGFIRE_TOKEN` in `.env` and every
+> FastAPI request streams to your Logfire project. No token → no-op (tests/offline unaffected). Live
+> Hosted-MCP setup (for the admin copilot) is in
+> [`docs/specs/field-service-recovery/hosted-mcp-setup.md`](docs/specs/field-service-recovery/hosted-mcp-setup.md).
 
 > **`/health/deps` (Step 10)** — one call, every external dep's state. **Cheap by default:** only
 > Postgres `SELECT 1` + the RabbitMQ connection check (our own infra) + config-present for the rest —
@@ -411,6 +417,26 @@ curl -X POST http://localhost:8000/sim/dlq/replay   # {"replayed": N}
 uv run pytest -q tests/test_failures.py
 ```
 
+## 3g. Salesforce trigger: the flow started by a real SF event (build step 9c)
+
+*Today `/sim/appointment-at-risk` fires the case. In production a real Salesforce **Platform Event**
+(`Appointment_At_Risk__e`) over the **Pub/Sub API** fires it. The subscriber publishes the SAME
+contract event onto the SAME RabbitMQ exchange — consumer, graph, policy, RCS downstream never
+change.* Mock-first: the seam + payload mapper are built + tested; `/sim` stays the offline twin.
+
+```bash
+# Prove the mapper + the armed/unarmed gate offline (no org, no deps) — runs in CI:
+uv run pytest -q tests/test_event_source.py
+```
+
+- **Arming (gated, needs the org):** set `SF_LOGIN_URL` + `SF_CLIENT_ID` + `SF_CLIENT_SECRET` in
+  `.env` (all three → `sf_pubsub_armed`). Blank → no subscriber starts, `/sim` stays the trigger.
+- The real gRPC subscription body is the **gated live step** — it needs the provisioned Field
+  Service org + the `Appointment_At_Risk__e` Platform Event + the pubsub deps. Arming the creds
+  before that raises a clear "gated live step" error on boot (fails loud by design).
+- Setup lives in [`docs/specs/field-service-recovery/salesforce-handoff.md`](docs/specs/field-service-recovery/salesforce-handoff.md);
+  the step write-up is [`build-step-9c-salesforce-trigger.md`](docs/specs/field-service-recovery/build-step-9c-salesforce-trigger.md).
+
 ## 4. Scenario → where it's proven
 
 | Scenario | What it shows | How to see it today |
@@ -424,6 +450,7 @@ uv run pytest -q tests/test_failures.py
 | Commerce (Step 6) | chargeable repair → quote → Approve & Pay → capture → close | §3d · or `make test` → `test_commerce.py` |
 | No double-charge (Step 6) | same payment fired twice charges once | §3d, same `eventId` twice · or `test_commerce.py` |
 | Vonage RCS (Step 9b) | real carousel send + tap webhook + signature verify + dedup | §3e · or `make test` → `test_vonage.py` |
+| Salesforce trigger (Step 9c) | SF Platform Event → mapper → same queue (downstream unchanged) | §3g · or `make test` → `test_event_source.py` |
 | RCS→SMS fallback (Step 7) | card undelivered → same options over SMS | §3f · or `make test` → `test_failures.py` |
 | Salesforce-down/DLQ (Step 7) | outage → event parks in DLQ → replay on recovery | §3f (needs RabbitMQ) · or `test_failures.py` |
 
@@ -449,6 +476,9 @@ apps/orchestrator/app/
   api/routes.py         /cases, /cases/{id}, /tools, /health, /health/deps (Step 10), /metrics.
   health.py             check_deps() — deep dep-health for /health/deps (concurrent, cached, no leaks).
   sim/routes.py         /sim/* — fire events / resume a paused case (the offline twin of /webhooks/*).
+  events/source.py      the at-risk event SOURCE (Step 9c): real Salesforce Pub/Sub subscriber when
+                        armed, else None so /sim is the trigger. platform_event_to_at_risk maps the
+                        SF payload → our contract event → same RabbitMQ exchange (downstream unchanged).
   main.py               builds the fakes + Toolbox + graph once on startup; runs the consumer.
 packages/contract/      shared Pydantic event/type models (one source of truth both sides validate).
 docs/specs/field-service-recovery/   the specs + living context docs. START at context/00-overview.md.
@@ -470,10 +500,18 @@ price-book authority, two-layer no-double-charge) →
 with stdlib JWT verify + `message_uuid` dedup, **built + offline-tested** 2026-10-08, **65 green**;
 only the one live send to a real Android is gated — see §3e) →
 **Step 7 Failure demos** (RCS→SMS fallback + Salesforce-down/DLQ peek/replay, **built + offline-tested**
-2026-10-08, **70 green**; the DLQ land+replay is a manual RabbitMQ demo — see §3f).
-Next: **9b live fire** (arm `VONAGE_TEST_TO` + the two webhook URLs) · **9c** real
-Salesforce MCP ([`salesforce-handoff.md`](docs/specs/field-service-recovery/salesforce-handoff.md)) ·
-**7** failure demos · **8** panel + dashboards.
+2026-10-08, **70 green**; the DLQ land+replay is a manual RabbitMQ demo — see §3f) →
+**Step 9c Salesforce trigger** (the at-risk flow started by a real SF Platform Event over Pub/Sub —
+seam + payload mapper **built + offline-tested** 2026-10-10, **78 green**; the gRPC subscription is
+gated on the org — see §3g) →
+**Decision A** (2026-10-10: inventory is a **separate e-com source** — product image + price + stock;
+Salesforce owns the service domain only. E-com = a real Node/Postgres service + admin dashboard, no
+customer storefront; stack/host TBD — recorded in `context/01-domain-and-data.md`).
+Next: **e-com inventory service** (Vercel + Supabase) · **9c live fire** (fill the gRPC subscriber once
+the org is provisioned) · **Step 12** make the stack honest — **real MCP** (SF Hosted MCP + e-com MCP
+server + admin copilot; pipeline stays deterministic), **Logfire** god-eye view, **simple
+reconciliation** (see [`build-step-12-real-mcp-and-observability.md`](docs/specs/field-service-recovery/build-step-12-real-mcp-and-observability.md)) ·
+**Salesforce reads live** via `apps/salesforce-apex/` + the `RestSalesforce` adapter · **9b live fire** · **8** panel polish.
 
 > **Webhook scope:** Razorpay payment = `/sim/payment` **poll** (no Razorpay webhook). **Vonage RCS
 > inbound (taps) + status = real webhooks** (9b). `/sim/*` stays as the offline twin for tests/demos.
@@ -499,7 +537,55 @@ Full detail per step: `docs/specs/field-service-recovery/build-step-*.md`.
 Paste these to drive the next pieces. House rules: **plan first, wait for go**, plain-English
 teaching, mock-first, and I'll always surface what you must set up.
 
-**Continue after Step 10 (panel + realistic data both shipped) — the current front door**
+**★ CURRENT FRONT DOOR (2026-10-10) — paste this to continue in a fresh chat, nothing lost**
+```
+Continue FieldFlow AI. Working dir C:\Users\hp\Desktop\RCS-VONAGE-POC.
+
+READ FIRST (in order): CLAUDE.md (HARD rules — plain teaching style, PLAN-FIRST + WAIT for my go on open
+questions, surface my action items + junior delegation, end every reply with What I achieved / What I
+need from you / Next steps; spec-driven under docs/specs/field-service-recovery/; playbook.md is the
+command home); docs/specs/field-service-recovery/README.md (status + key decisions); playbook.md §6
+(build status) + §10 (deployment); memory fieldflow-build-progress.
+
+ONE IDEA: AI proposes -> deterministic policy decides -> human approves risk -> RCS is the customer
+control plane. The decision trace is the hero.
+
+STATE (2026-10-10): backend deep — Spine,1,2,§3,4(RAG live),5(LLM ladder live),6(commerce),9(Razorpay),
+9b(Vonage RCS LIVE-fired on a real device 2026-10-09),7(failure demos),9c(SF Pub/Sub trigger mock-first),
+8(React panel),10(catalog),12 quick wins(Logfire wired + reconciliation). From apps/orchestrator:
+`uv run pytest -q` -> 79 passed, `uv run ruff check .` clean, `uv run python -c "import app.main"` OK
+(dev deps: `uv sync --extra dev`). All mock-first/offline; only live fires gated.
+
+DECISIONS (recorded in context docs + build-step-9c + build-step-12 + salesforce-handoff + hosted-mcp-setup):
+- Decision A: inventory is a SEPARATE e-com source (product image+price+stock); Salesforce owns the
+  service domain only. E-com = Node/Next.js service + admin dashboard, NO customer storefront.
+- MCP made REAL (was MCP-shaped). Driver = an admin copilot (agentic chat over SF + e-com). GUARDRAIL:
+  the recovery pipeline stays DETERMINISTIC (Apex REST + policy ladder, never LLM-invoked MCP on
+  mutations); copilot WRITES stay human-confirmed. SF reads -> Salesforce Hosted MCP (hosted-mcp-setup.md);
+  pipeline SF reads + reschedule -> Apex REST (apps/salesforce-apex/).
+- Deployment: control panel + e-com -> Vercel; orchestrator -> Render (I ping /health every 5 min vs cold
+  start); Supabase (DB) + CloudAMQP (queue) managed. Logfire god-eye WIRED (my LOGFIRE_TOKEN is set).
+
+MY ACTION ITEMS (the real blockers; I have org access + FS enabled + SF_* trigger creds added):
+1. Provision the org per salesforce-handoff.md §8 (My Domain, FS, Platform Event Appointment_At_Risk__e,
+   Connected App client-credentials) — confirm done.
+2. Deploy apps/salesforce-apex/FieldFlowRest.cls + create Asset.Warranty_Active__c + grant the integration
+   user Apex-class access (its README) + confirm assumptions A1-A4.
+3. For the copilot: a NEW External Client App for Hosted MCP (hosted-mcp-setup.md) — separate creds.
+
+NEXT BUILD ORDER (confirm/reorder; then PLAN-FIRST — restate, open questions w/ your recommendation, WAIT):
+1. RestSalesforce adapter -> SF reads LIVE (same client-credentials token works for Apex REST), then
+   reschedule. 2. SF Hosted MCP + real MCP client (reads) — needs the new ECA. 3. E-com service (Next.js
+   + Supabase; admin dashboard + NFR-5 grab-part knob) + its MCP server. 4. Admin copilot /copilot route +
+   panel chat (writes human-confirmed). 5. 9c live fire (fill SalesforcePubSubSource.run gRPC once org live).
+
+RULES: mock-first (keep 79 tests green; disarm live creds via process env for dry runs); PLAN-FIRST + WAIT;
+update playbook.md + the build-step Explanation in the SAME change; ask before editing context/** beyond
+approved notes; do NOT fire a billed Vonage send, a live payment, or edit apps/orchestrator/.env without my
+explicit go. Ask me which to start, then plan it.
+```
+
+**Continue after Step 10 (panel + realistic data both shipped) — older front door**
 ```
 Continue FieldFlow. Working dir C:\Users\hp\Desktop\RCS-VONAGE-POC. Read in order: CLAUDE.md (HARD
 rules: plain teaching style, plan-first, WAIT for my go on open questions, surface my action items +
@@ -733,3 +819,28 @@ pnpm run types          # regenerate TS types from packages/contract/schema/*.js
   `src/index.css` (Tailwind maps semantic names in `tailwind.config.js`). Re-skin = edit that one
   block. A persisted dark/light toggle lands with the shell.
 - `make panel` (repo root) is the shortcut for `pnpm dev` in this folder.
+
+---
+
+## 10. Deployment topology (decided 2026-10-10)
+
+*Where each piece runs for the hosted demo. All free tiers.*
+
+| Piece | Host | Notes |
+|-------|------|-------|
+| **Control panel** (React/Vite) | **Vercel** | static build; set `VITE_API_URL` to the Render orchestrator URL. |
+| **E-com inventory service** (Node/Next.js + admin dashboard) | **Vercel** | API routes + dashboard in one app; **Supabase Postgres** for stock, **Supabase Storage** (or Vercel Blob) for product images. |
+| **Orchestrator** (FastAPI + consumer + 9c subscriber) | **Render** (free web service) | the consumer + Pub/Sub subscriber run inside the one process. |
+| **DB** | **Supabase** (Postgres + pgvector) | already managed. |
+| **Queue** | **CloudAMQP** | already managed. |
+
+- **Render free sleeps after 15 min idle** → the user pings **`GET /health`** every 5 min (external
+  cron / uptime pinger) to keep it warm. `/health` is cheap and never hits the network, so it's safe
+  to hammer. *(ponytail: a warm-ping is the POC fix; a paid always-on dyno is the prod upgrade.)*
+- **E-com on Vercel is serverless**, so the NFR-5 atomic reserve **must** be a single Postgres
+  conditional `UPDATE ... SET qty = qty - $n WHERE qty >= $n` — correct no matter how many serverless
+  instances run. The app layer is a thin API over that one guarantee.
+- **Product image** served from the e-com over public HTTPS → the orchestrator puts that URL on the
+  RCS card → fixes the 9b blank-card (Google RBM fetches the image itself).
+- Orchestrator env on Render = the same `.env.example` keys (Supabase `DATABASE_URL`, CloudAMQP
+  `RABBITMQ_URL`, the LLM/Jina/Vonage/SF keys). Nothing new to wire — just set them in Render's dashboard.

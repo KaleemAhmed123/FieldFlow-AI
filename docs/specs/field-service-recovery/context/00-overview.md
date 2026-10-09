@@ -66,8 +66,8 @@ VONAGE Messages API (RCS send + real inbound/status webhooks, 9b)  ·  FastAPI i
     (deterministic authority)           │                     (manuals · warranty · SOPs)
                               ┌──────────┴──────────┐                │
                               ▼                     ▼            pgvector
-                     Salesforce Field Svc    Service-Commerce
-                     (CRM + inventory)        (quotes/orders) ─▶ Razorpay (Test)
+            Salesforce Field Svc · e-com     Service-Commerce
+            (service domain)  (products+stock) (quotes/orders) ─▶ Razorpay (Test)
 
    Underneath:  PostgreSQL (state · idempotency · audit · AI decisions · pgvector)
                 Logfire (live request/case traces — the god-eye view) · Prometheus (metrics, optional)
@@ -91,11 +91,24 @@ VONAGE Messages API (RCS send + real inbound/status webhooks, 9b)  ·  FastAPI i
 | 3 | Orchestration | **LangGraph** | A recovery case is long-running and needs human pauses — checkpoint, interrupt, resume. |
 | 4 | Knowledge | **LlamaIndex + pgvector** | Salesforce has the data; RAG supplies the *knowledge* (fault codes, SOPs, compatibility). |
 | 5 | Tools | **MCP** | Exposes business systems as a small controlled tool surface, not 50 raw APIs in a prompt. |
-| 6 | Enterprise | **Salesforce FS + Service-Commerce + Razorpay** | Credible source of truth + a thin commerce seam for parts/quotes/pay. |
+| 6 | Enterprise | **Salesforce FS + e-com inventory + Service-Commerce + Razorpay** | Service domain (SF) + product/stock (e-com) + a thin commerce seam for quotes/pay. |
 | 7 | Reliability | **RabbitMQ + idempotency + DLQ + reconciliation + Logfire observability** | Makes it credible as production, not a demo. |
 
 Full justification: [`../srs.md`](../srs.md) §6.1. The anti-goal is **technology soup** — if a
 layer can't answer "why am I here" in one line, it's cut (risk R13).
+
+> **Build decisions (2026-10-10) — making the stack honest (audit found 3 claimed-but-thin layers):**
+> - **Layer 5 (MCP) becomes REAL**, not just MCP-shaped. **Driver:** a new **FieldFlow admin copilot**
+>   — a chat on the control panel where an admin asks open-ended questions across Salesforce *and* the
+>   e-com inventory. An open-ended agent can't hardcode every query→tool mapping; it must *discover and
+>   pick* tools — exactly MCP's job (the one thing the deterministic pipeline didn't need). So:
+>   **Salesforce Hosted MCP** (Headless 360) for SF + a small **e-com MCP server** for inventory,
+>   consumed by a real MCP client (the copilot, and the orchestrator's read path). **Guardrail:** the
+>   automated recovery pipeline keeps its policy ladder — MCP never fires a mutation unsupervised;
+>   copilot writes stay human-confirmed. See [`03-knowledge-and-tools.md`](03-knowledge-and-tools.md) §B.
+> - **Layer 7 Logfire** is being **properly wired** as the god-eye view (today it's only a config
+>   placeholder; real observability is structlog + Prometheus). **Reconciliation** ships as a simple
+>   pass (ponytail). Spec: [`../build-step-12-real-mcp-and-observability.md`](../build-step-12-real-mcp-and-observability.md).
 
 ## Component → where it will live
 
@@ -109,11 +122,13 @@ layer can't answer "why am I here" in one line, it's cut (risk R13).
 | RAG index + retrieval (LlamaIndex/pgvector) | You | Knowledge layer. |
 | MCP client | You | How the graph calls tools. |
 | MCP servers over Salesforce | You + SF Dev | **Co-owned** — you want hands-on here. |
-| Salesforce Field Service + Pub/Sub events | SF Dev | Domain + inventory + event source. |
+| Salesforce Field Service + Pub/Sub events | SF Dev | Service domain (appointment/asset/customer/technician/warranty) + the at-risk event source. |
+| E-com inventory service (products + stock + admin dashboard) | You | **Separate source (Decision A)** — owns product image + price + stock. Real Node/Postgres service behind the `InventoryTools` seam; admin dashboard, no customer storefront. Stack/host TBD. |
 | Service-Commerce (parts/quotes/orders/pay/refund) | You | A module **inside** the orchestrator (Python), not a separate app. **Built mock-first (Step 6):** price-book authority + `FakeRazorpay` behind a `PaymentGateway` seam; quote → Approve & Pay → capture, idempotent (no double-charge). Real Razorpay Test-Mode swaps in at the gated live step. |
 | Razorpay Test-Mode integration | You | Open-URL/webview to a hosted page. |
 | Observability (Logfire traces + Prometheus metrics) | You | God-eye view of every request and case. |
 | Demo control panel | You | Live failure triggers for the showcase. |
+| Admin copilot (panel chat) | You | **New (2026-10-10):** an MCP client — an LLM chat over SF Hosted MCP + the e-com MCP server, answering admins' open-ended queries. Reads freely; writes are human-confirmed. The agentic use case that justifies real MCP. |
 
 ## Glossary
 
@@ -140,8 +155,9 @@ layer can't answer "why am I here" in one line, it's cut (risk R13).
   RCS carries the button, not the card number. Show this honestly (risk R7).
 - **The AI is not the scheduler.** It never says "move it to 3 PM." It proposes options; the
   policy engine + Salesforce decide validity. Anyone wiring "let the LLM reschedule" is wrong.
-- **Salesforce is the inventory system too** — we do *not* build a separate inventory store
-  unless Field Service access blocks us.
+- **Inventory is a SEPARATE e-com source, not Salesforce** (Decision A, 2026-10-10). The e-com
+  owns product image + price + stock; Salesforce owns the service domain. See
+  [`01-domain-and-data.md`](01-domain-and-data.md).
 - **Commerce reuses patterns, not a domain.** The service-commerce layer borrows proven
   idempotency / payment / event / reliability patterns. We do **not** bolt an unrelated commerce
   engine onto appliance repair.
@@ -150,4 +166,5 @@ layer can't answer "why am I here" in one line, it's cut (risk R13).
 
 ---
 
-*Last updated 2026-10-08 — kept in sync with the code as it lands (commerce built in Step 6).*
+*Last updated 2026-10-10 — Decision A (inventory = separate e-com source) + Step 9c (the at-risk
+flow triggered by a real Salesforce Platform Event, mock-first).*

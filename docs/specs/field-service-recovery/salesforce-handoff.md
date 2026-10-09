@@ -9,6 +9,12 @@ real Salesforce swap, build **Step 9c** ([`build-step-9.md`](build-step-9.md)).
 > (your "Headless 360" — API-only, no Salesforce UI in the demo). **You provision + grant access; I
 > generate the integration code.** Nothing here touches our Python until the org is ready.
 
+> **⚠ Decision A (2026-10-10): inventory left Salesforce.** Salesforce now owns **only the service
+> domain** (appointment, asset, customer, technician, warranty). **Product image + price + stock
+> moved to a separate e-com inventory service** (its own handoff when we build it). So the
+> `inventory.find_part` / `inventory.reserve` rows below are **struck** — they no longer map to
+> Salesforce `ProductItem`. Everything else on this sheet stands.
+
 ## 0. The one thing to understand first
 
 Field Service (FS) is a Salesforce add-on with its **own data model**. A real service visit is a
@@ -36,9 +42,9 @@ Each of our tools (`app/tools/registry.py`) maps to a Salesforce read or write. 
 | `salesforce.get_customer` | read | **Contact** (via WorkOrder.ContactId) | `Name`, `Phone`/`MobilePhone` |
 | `salesforce.get_asset` | read | **Asset** (+ warranty, see §4 OQ-A) | `Name`/model, warranty active? |
 | `salesforce.get_technician` | read | **ServiceResource** (+ **ServiceResourceSkill**) | name, skills, `ServiceTerritoryId` |
-| `inventory.find_part` | read | **ProductItem** (+ **Location**) | `QuantityOnHand` per location for a part |
+| ~~`inventory.find_part`~~ | read | **moved → e-com** (Decision A) | product image/price/stock now live in the e-com service, not Salesforce |
 | `reschedule.confirm` | action | **ServiceAppointment** update | set new `SchedStartTime`/`SchedEndTime` (or FS scheduling API) |
-| `inventory.reserve` | action | **ProductItem** (atomic decrement) | reserve N of a part — conditional update, no oversell (NFR-5) |
+| ~~`inventory.reserve`~~ | action | **moved → e-com** (Decision A) | atomic stock decrement is the e-com service's job now |
 | at-risk trigger | event | **Pub/Sub API** on ServiceAppointment | "appointment is at risk" → starts a recovery case |
 
 ## 2. Checklist — mostly the SF dev (the heavy FS config)
@@ -139,10 +145,72 @@ GET  /apexrest/fieldflow/appointment/{id}     -> { appointmentId, slaWindowMinut
 GET  /apexrest/fieldflow/customer/{id}         -> { name, phone }
 GET  /apexrest/fieldflow/asset/{id}            -> { model, warranty }        // "active" | "expired"
 GET  /apexrest/fieldflow/technician/{id}       -> { name, skills[], territory }
-GET  /apexrest/fieldflow/part/{partNo}         -> [ { location, qty } ]
 POST /apexrest/fieldflow/reschedule            -> { status }                 // body: {appointmentId, slotId}
-POST /apexrest/fieldflow/reserve               -> { ok }                     // body: {partNo, qty} (atomic)
+# NOTE (Decision A): part lookup + reserve are the e-com service's job now, NOT Salesforce.
 ```
 
 If you give me the final endpoint URLs + the integration-user auth, I wire the real reads first
-(safe), then the two actions — same order as Step 2.
+(safe), then the reschedule action — same order as Step 2.
+
+> **The starter Apex is written:** [`apps/salesforce-apex/FieldFlowRest.cls`](../../../apps/salesforce-apex/)
+> (+ `README.md` with deploy/config steps). **Path decision (OQ-C, 2026-10-10):** plain **Apex REST
+> behind the Toolbox** — NOT Salesforce hosted MCP — because the orchestrator calls tools
+> deterministically and the LLM must never invoke a mutation. Hosted MCP (Headless 360) is an
+> **optional, additive showcase** (reproduce the claude.ai-connector demo) that needs zero
+> orchestrator changes; it lands in `apps/headless360-sf/` only if we choose the "show Headless 360"
+> narrative. Hosted MCP can wrap this same Apex REST later.
+
+---
+
+## 8. Provisioning recipe (compact — do these in order, in a free Developer Edition org)
+
+> Each step says **what it produces**. The goal: fill `SF_LOGIN_URL`, `SF_CLIENT_ID`,
+> `SF_CLIENT_SECRET` in `apps/orchestrator/.env` (the other two SF vars are fixed defaults). Sign up
+> for a free org at **developer.salesforce.com/signup** if you don't have one.
+
+**A. My Domain → gives `SF_LOGIN_URL`.**
+1. Setup → Quick Find **"My Domain"** → set/confirm a domain → **Deploy to Users**.
+2. Your login URL is `https://<yourdomain>.my.salesforce.com` → that's **`SF_LOGIN_URL`**.
+
+**B. Enable Field Service (gives the service-domain objects).**
+3. Setup → Quick Find **"Field Service Settings"** → toggle **Enable Field Service** → Save.
+   (FS is included in Developer Edition. The core objects — WorkOrder, ServiceAppointment, Asset,
+   Contact, ServiceResource — are all we need for the headless demo; skip the dispatcher console.)
+
+**C. Define the at-risk Platform Event → the trigger's payload.**
+4. Setup → Quick Find **"Platform Events"** → **New Platform Event**: Label `Appointment At Risk`,
+   Plural `Appointments At Risk` → the API name becomes **`Appointment_At_Risk__e`** (matches
+   `SF_PUBSUB_TOPIC=/event/Appointment_At_Risk__e`). Publish Behavior: **Publish After Commit**.
+5. Add custom fields (all on that event): `WorkOrderId__c` (Text 50), `AppointmentId__c` (Text 50),
+   `Reason__c` (Text 50), `DelayMinutes__c` (Number 5,0). These are exactly what our mapper reads.
+
+**D. Create the demo data chain (so a fired event has something real to reference).**
+6. Create (any way — UI or Data Loader): 1 Account + Contact, 1 Asset (set warranty), 1
+   ServiceResource + ServiceTerritory, 1 WorkOrder + 1 ServiceAppointment linked together. Mirror
+   our fake ids/shape (`SA-19281`) so the existing demo just works.
+
+**E. Connected App with client-credentials → gives `SF_CLIENT_ID` + `SF_CLIENT_SECRET`.**
+7. Setup → **App Manager** → **New Connected App** (or External Client App). Basic info: name +
+   your email. Under **API (Enable OAuth Settings)**: tick **Enable OAuth Settings**; Callback URL =
+   `https://login.salesforce.com/services/oauth2/callback` (required even though unused); OAuth
+   scopes = **Manage user data via APIs (api)** + **Perform requests at any time
+   (refresh_token, offline_access)**. Tick **Enable Client Credentials Flow**. Save.
+8. **Wait ~10 min** (new Connected Apps take time to activate).
+9. App Manager → your app → **Manage** → **Edit Policies** → under *Client Credentials Flow* set the
+   **Run As** user = your **integration user** (an admin user is fine for the POC; least-privilege
+   later). Save.
+10. App Manager → your app → **View** → **Manage Consumer Details** (email verification code) → copy
+    **Consumer Key → `SF_CLIENT_ID`**, **Consumer Secret → `SF_CLIENT_SECRET`**.
+
+**F. Smoke-test the creds (one curl — proves the token works before any code runs).**
+```bash
+curl -X POST "$SF_LOGIN_URL/services/oauth2/token" \
+  -d grant_type=client_credentials -d client_id="$SF_CLIENT_ID" -d client_secret="$SF_CLIENT_SECRET"
+# → JSON with access_token + instance_url. Pub/Sub then uses that token in its "accesstoken" +
+#   "instanceurl" gRPC metadata headers (endpoint api.pubsub.salesforce.com:7443). That's the part
+#   I fill in SalesforcePubSubSource.run once these three env vars are set.
+```
+
+**Hand me back:** the three env-var values (or just confirm they're in `.env`) + confirmation the
+Platform Event + demo chain exist. Then I fill the gRPC subscriber and we do the one live fire.
+Sources for these steps are listed in the session; Salesforce's UI labels drift, so match by intent.

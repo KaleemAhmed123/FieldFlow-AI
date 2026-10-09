@@ -28,7 +28,7 @@
 | Decision | Why | Rejected alternative |
 |----------|-----|----------------------|
 | **Field-service recovery** (appliance/AC) as the scenario | Strongest 2026 evidence; visually rich; maps perfectly to Salesforce FS; best "your fit" score | Delivery recovery · claims · healthcare · fraud (see [`../idea.md`](../idea.md) candidates) |
-| **Salesforce owns domain + inventory** | FS model is already perfect; credible enterprise source of truth | Building our own domain/inventory tables |
+| **Salesforce owns the service domain; a separate e-com owns inventory** (Decision A, 2026-10-10) | Stock/product data realistically lives in a commerce/ERP system, not the CRM; matches the separate `inventory.py` seam already in the code | Folding inventory into Salesforce (its prior framing); building our own domain tables |
 | **Thin Service-Commerce**, not a storefront | We only need parts/quotes/orders/pay/refund | Bolting on a full unrelated commerce platform |
 | **Commerce = reused patterns only** | Keep the story clean — a repair service, not a borrowed storefront | Presenting an unrelated product's domain as ours |
 | **MCP read/action split** | Keeps dangerous ops as validated functions | Raw Salesforce API to the LLM |

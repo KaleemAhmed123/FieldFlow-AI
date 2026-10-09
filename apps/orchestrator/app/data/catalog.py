@@ -1,7 +1,9 @@
 """Load + query the product catalog (app/data/catalog.json) — the single source of truth for
 inventory stock, Salesforce assets, the RAG corpus, and proposer grounding.
 
-Pure data access, no DB/network. Later this same catalog seeds a real Salesforce / e-com.
+Pure data access, no DB/network. Decision A (2026-10-10): product data (image + price + stock)
+belongs to a SEPARATE e-com inventory source; Salesforce owns only the service domain. This catalog
+seeds that e-com inventory + the Salesforce asset until the real systems swap in.
 """
 
 from __future__ import annotations

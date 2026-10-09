@@ -1,8 +1,9 @@
 """Inventory tool interface. Fake with mutable stock so the inventory race (NFR-5) can fire.
 
 `find_part` is the safe read; `reserve` is the atomic action tool — it decrements under a check,
-so a reserve that loses the race returns False instead of overselling. Real Salesforce Field
-Service inventory swaps in behind the same two methods later.
+so a reserve that loses the race returns False instead of overselling. Inventory is a SEPARATE
+source from Salesforce (Decision A, 2026-10-10): a real e-com inventory service (Node/Postgres)
+owns product image + price + stock and swaps in behind these same two methods later.
 """
 
 from __future__ import annotations
@@ -18,7 +19,7 @@ class InventoryTools(Protocol):
 class FakeInventory:
     """In-memory stock keyed by part number, seeded from the product catalog (the single source of
     truth). Scarce parts sit at qty 1 so the inventory race (NFR-5) can fire. `set_stock` is the
-    demo/test knob. Real Salesforce Field Service inventory swaps in behind the same two methods."""
+    demo/test knob. A real e-com inventory service swaps in behind the same two methods (Dec. A)."""
 
     def __init__(self, stock: dict[str, list[dict]] | None = None) -> None:
         from app.data.catalog import stock_seed
