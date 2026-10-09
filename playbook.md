@@ -46,6 +46,8 @@ make install          # uv sync — installs the Python workspace (orchestrator 
 
 > **When you'll be asked for infra (I'll highlight it at the time):**
 > - **DB (Supabase Postgres + pgvector):** needed for RAG (step 4) and durable multi-process runs.
+>   When `DATABASE_URL` is Postgres, paused cases are now **restart-durable** — the LangGraph
+>   checkpointer writes to Postgres (see note below). On SQLite/offline it stays in-memory.
 > - **Queue (CloudAMQP, or `make up` for local RabbitMQ):** needed to fire events over HTTP (§3).
 > - **Groq key:** step 5 (real LLM). **Razorpay test keys:** step 6. **Salesforce org + Vonage:**
 >   step 9.
@@ -62,6 +64,18 @@ make panel            # run the React control panel (Vite) on :5173
 make schema           # export the contract JSON Schema (frontend types) — after editing events/types
 make up / make down   # start/stop local infra via Docker (only if you don't use managed tiers)
 ```
+
+### Durable checkpointer (paused cases survive a restart)
+
+- The **checkpointer** = where a paused case's graph state lives so Approve/Reply/Pay can resume it.
+- **Postgres** when `DATABASE_URL` is Postgres (Supabase) — survives a `uvicorn` restart. **In-memory**
+  on SQLite/offline (lost on restart; fine for tests). One seam: `app/graph/checkpointer.py`.
+- First real boot runs a one-time `.setup()` creating `checkpoints`, `checkpoint_blobs`,
+  `checkpoint_writes`, `checkpoint_migrations` in Supabase (idempotent — safe to re-run).
+- Deps: `langgraph-checkpoint-postgres`, `psycopg[binary]` (added via `uv`). **Windows:** the app
+  sets `SelectorEventLoop` automatically (psycopg3 async can't use the default Windows loop).
+- A resume with no saved state (checkpoint lost/expired) now returns **409**, not a 500.
+- ponytail / later: no retention yet — prune closed-case checkpoints when volume grows.
 
 Health check once `make dev` is up:
 
@@ -454,6 +468,42 @@ Full detail per step: `docs/specs/field-service-recovery/build-step-*.md`.
 
 Paste these to drive the next pieces. House rules: **plan first, wait for go**, plain-English
 teaching, mock-first, and I'll always surface what you must set up.
+
+**Continue after Step 10 (panel + realistic data both shipped) — the current front door**
+```
+Continue FieldFlow. Working dir C:\Users\hp\Desktop\RCS-VONAGE-POC. Read in order: CLAUDE.md (HARD
+rules: plain teaching style, plan-first, WAIT for my go on open questions, surface my action items +
+junior delegation, end every reply with What I achieved / What I need from you / Next steps; playbook.md
+is the command home; spec-driven under docs/specs/field-service-recovery/); handoff-fieldflow.md
+(LATEST = session 6, read first); build-step-8.md + build-step-10-realistic-domain-data.md (both
+SHIPPED); playbook.md §9 (run the panel) + §3b (catalog + RAG).
+
+State: backend Steps 1–7, 9 (Razorpay), 9b (Vonage) built + offline-green; Step 8 React control panel
+SHIPPED (dark+light, decision-trace hero, polling behind a useLiveCases SSE seam); Step 10 "realistic
+domain data" SHIPPED + LIVE-VERIFIED — a 14-model catalog (app/data/catalog.json) seeds inventory +
+the Salesforce asset + a dense PDF RAG corpus and grounds the proposer (delay → no part, enforced).
+From apps/orchestrator: `uv run pytest -q` → 72 passed, `uv run ruff check .` clean,
+`uv run python -c "import app.main"` OK (dev deps: `uv sync --extra dev`). Panel: cd apps/control-panel
+&& pnpm install && pnpm dev (set VITE_USE_FIXTURES=true for offline). KEEP apps/control-panel/pnpm-workspace.yaml
+(esbuild allowlist) or pnpm install errors. The one story: AI proposes → deterministic policy decides →
+a human approves risk → RCS is the customer control plane; the decision trace is the hero.
+
+Open / not done: (1) NOTHING is committed yet — Step 8 (12 commit cmds) + Step 10 (8 commit cmds) are
+in my session notes; (2) a PARALLEL "Step 10 — dependency-health endpoint" (app/health.py,
+tests/test_health_deps.py, build-step-10.md, edits to api/routes.py+config.py+broker.py) is in the tree
+— STEP-NUMBER COLLISION, decide a renumber; (3) live-demo warm-up: the first Jina retrieval is ~60s
+cold, warm it with one throwaway fire; (4) gated real integrations — Vonage live RCS send (needs VONAGE
+creds + ngrok + the 2 webhook URLs + a test Android; code armed behind VONAGE_TEST_TO, $100 credit —
+one send per demo) and Salesforce real MCP/Apex (needs a Field Service Developer Edition org — see
+salesforce-handoff.md); (5) optional panel model-picker + more FakeSalesforce appointments so partners
+can fire the other 13 catalog models.
+
+Ask me which to do next: commit · resolve the step-10 collision · Vonage live · Salesforce MCP · panel
+model-picker. Then plan-first (restate the task, list open questions with your recommendation, and WAIT
+for my go), mock-first, keep the 72 tests green, update playbook.md + the step's Explanation in the same
+change. Do NOT fire a billed Vonage send, run a live demo, or edit my apps/orchestrator/.env without my
+explicit go (disarm Vonage/Razorpay via process env for any dry run).
+```
 
 **Build Step 9b (real Vonage RCS — send + real webhooks) — the NEXT step, plan already written**
 ```

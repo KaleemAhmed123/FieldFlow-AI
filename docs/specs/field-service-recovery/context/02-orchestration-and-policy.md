@@ -132,10 +132,13 @@ cross-system actions.)
 2. **Wait for a human** — when policy says "needs human" or AI confidence is below threshold, the
    graph interrupts for an operator decision (resumed via `/sim/approve`).
 
-Both waits are durable via LangGraph's checkpointer. **Step 1 uses an in-memory checkpointer** —
-real interrupt/resume in-process, but a restart loses paused cases. Swapping in the Postgres
-checkpointer (so a crash mid-wait resumes rather than restarts) is a one-dependency change behind
-`make_checkpointer()`.
+Both waits are durable via LangGraph's checkpointer. **The live app checkpoints to Postgres**
+(`AsyncPostgresSaver` on the same Supabase DB), so a paused case survives a restart or crash and
+resumes rather than restarts. Tests and keyless/offline runs use an in-memory checkpointer (no
+infra). The two live behind one seam in `app/graph/checkpointer.py`: `make_checkpointer()`
+(in-memory) and `checkpointer_scope()` (Postgres when `DATABASE_URL` is Postgres, else in-memory).
+A resume that finds no saved state (checkpoint lost/expired) fails cleanly with a 409 instead of
+crashing. See [`../durable-checkpointer.md`](../durable-checkpointer.md).
 
 ## Things that will look one way but aren't
 
