@@ -292,16 +292,17 @@ and the tap comes back to us as a real **webhook** that resumes the case.* Mock-
 `/sim/*` stays the offline twin, so all tests run with no device and no creds.
 
 **The two secrets (different jobs):**
-- **Send** uses **Basic auth** = your `VONAGE_API_KEY` + `VONAGE_API_SECRET`. (No private key needed
-  in our code.)
+- **Send** uses a **short-lived JWT (RS256)** signed with the application's **private key** —
+  `VONAGE_APPLICATION_ID` + `VONAGE_PRIVATE_KEY_PATH`. RCS senders are tied to an application, so
+  Basic auth (`api_key:api_secret`) **cannot** authenticate an RCS send — it returns `422`.
 - **Inbound webhooks** are verified with the **`VONAGE_SIGNATURE_SECRET`** (dashboard → Settings) —
   a JWT signed HMAC-SHA256; we check it with Python stdlib, no extra dependency.
 
 **Arming the real send (safe by default):** real send fires **only** when *all* of
-`VONAGE_API_KEY` + `VONAGE_API_SECRET` + `VONAGE_RCS_AGENT_ID` + `VONAGE_TEST_TO` are set. Keys can
-sit in `.env` during offline dev without a billed send ever firing — you arm it by setting
-`VONAGE_TEST_TO` (your test Android, E.164) right before a demo. **$100 credit: one send per manual
-demo, never in a loop or a test.**
+`VONAGE_APPLICATION_ID` + `VONAGE_PRIVATE_KEY_PATH` + `VONAGE_RCS_AGENT_ID` + `VONAGE_TEST_TO` are
+set. Creds can sit in `.env` during offline dev without a billed send ever firing — you arm it by
+setting `VONAGE_TEST_TO` (digits only, **no `+`**) right before a demo. **$100 credit: one send per
+manual demo, never in a loop or a test.**
 
 **The postback trick:** each slot's button carries a hidden string
 `postback_data = "correlationId|slotId|version"`. Vonage echoes it back on the inbound webhook, so
@@ -323,19 +324,32 @@ ngrok http 8000
 # 3. Dashboard → Settings → copy the Signature secret → VONAGE_SIGNATURE_SECRET in .env.
 ```
 
-> **Status: live fire is DEBT (deferred 2026-10-08).** The send + webhook code is built, armed behind
-> `VONAGE_TEST_TO`, and fully offline-tested (65 green). The one real device send below is pending the
-> tunnel/dashboard setup — do it when you can; nothing else is blocked on it.
+> **Status: live pipeline verified 2026-10-09.** The full AI path (RAG → proposer → policy → card)
+> fires live; the send auth was switched from Basic to **JWT** (the fix for the `422`). A real card
+> delivering to a device needs the RCS agent far enough along (test-device sends work without full
+> brand launch).
 
 ### The gated live demo (needs creds + your go + a test Android)
 
 ```bash
-uv add httpx             # make the HTTP client a runtime dep (only for the live send; tests already have it)
-# In .env: VONAGE_API_KEY, VONAGE_API_SECRET, VONAGE_RCS_AGENT_ID, and VONAGE_TEST_TO=+9198XXXXXXXX
-# Start the app (make dev), fire an at-risk event (§3) → a real RCS carousel lands on the phone.
-# Tap a slot on the phone → Vonage POSTs /webhooks/inbound → the case advances exactly like
-#   /sim/customer-reply. Watch /webhooks/status callbacks (delivered/read) land in the audit trail.
-curl http://localhost:8000/cases/<correlationId>   # the tap moved it past OPTIONS_SENT
+# Deps are already in pyproject: pyjwt[crypto] (JWT signing) + httpx. Nothing to add.
+# In .env (digits only on the number, NO +):
+#   VONAGE_APPLICATION_ID=<app id>
+#   VONAGE_PRIVATE_KEY_PATH=app/resources/private.key
+#   VONAGE_RCS_AGENT_ID=astrea_it
+#   VONAGE_TEST_TO=916394493446
+#
+# Start the app — on WINDOWS you MUST use --reload (uvicorn only sets the SelectorEventLoop that
+# psycopg3 needs when it runs with a reload subprocess; a plain run crashes on the ProactorEventLoop):
+#   uv run uvicorn app.main:app --reload --port 8000
+#
+# Fire with a REAL seeded appointment id — SA-19281 (or SA-OOW). Made-up ids crash load_context
+# (FakeSalesforce returns None). The first RAG retrieval is ~60s cold; warm it with one throwaway.
+curl -X POST http://localhost:8000/sim/appointment-at-risk -H "Content-Type: application/json" \
+  -d '{"workOrderId":"WO-LIVE","appointmentId":"SA-19281","reason":"technician_delay","delayMinutes":50,"eventId":"evt-live-1"}'
+# → a real RCS carousel lands on the phone. Tap a slot → Vonage POSTs /webhooks/inbound → the case
+#   advances exactly like /sim/customer-reply. /webhooks/status callbacks land in the audit trail.
+curl http://localhost:8000/cases/WO-LIVE   # the tap moved it past OPTIONS_SENT
 ```
 
 ```bash
