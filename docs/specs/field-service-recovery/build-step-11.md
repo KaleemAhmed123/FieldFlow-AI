@@ -1,4 +1,4 @@
-# Build Step 10 — dependency-health endpoint (`GET /health/deps`)
+# Build Step 11 — dependency-health endpoint (`GET /health/deps`)
 
 ## 1. Task
 
