@@ -78,6 +78,46 @@ class Settings(BaseSettings):
     vonage_signature_secret: str = ""        # verifies inbound webhook JWTs (HS256); blank → skip
     vonage_messages_url: str = "https://api.nexmo.com/v1/messages"
 
+    # Salesforce Pub/Sub trigger (build step 9c). The real trigger is a Salesforce Platform Event
+    # (Appointment_At_Risk__e) delivered over the Pub/Sub API. Blank creds → no subscriber starts
+    # and /sim stays the trigger (the offline default, every test). The real gRPC subscription is
+    # ARMED only when login_url + client_id + client_secret are all set, and needs the provisioned
+    # org — see docs/specs/field-service-recovery/salesforce-handoff.md.
+    sf_login_url: str = ""
+    sf_client_id: str = ""
+    sf_client_secret: str = ""
+    sf_pubsub_topic: str = "/event/Appointment_At_Risk__e"
+    sf_pubsub_endpoint: str = "api.pubsub.salesforce.com:7443"
+    # The still-stubbed gRPC trigger is behind an EXPLICIT opt-in (build step 12, OQ1): arming the
+    # REST reads below uses the SAME 3 creds, and we must not start the unfinished trigger task just
+    # because reads went live. Set true only when SalesforcePubSubSource.run is actually filled.
+    sf_pubsub_enabled: bool = False
+
+    # Salesforce Apex REST surface (build step 12 — the deterministic read + reschedule path against
+    # apps/salesforce-apex/). Reuses the SAME client-credentials creds as the trigger; sf_rest_armed
+    # swaps RestSalesforce in behind build_toolbox. Reads are safe to arm first. Slot labels
+    # ("TODAY 15:00-17:00") are wall-clock in sf_timezone; the adapter converts them to UTC ISO-8601
+    # for Salesforce so every system agrees on the one instant (OQ2).
+    sf_timezone: str = "Asia/Kolkata"
+
+    # Salesforce Hosted MCP (build step 12 Task 4 — the AGENTIC admin-copilot path, SEPARATE from
+    # the deterministic Apex REST above). A NEW External Client App (ECA), not the client-creds app.
+    # Admin-based: one shared OAuth token. Blank → no MCP client (offline default, every test).
+    # See hosted-mcp-setup.md.
+    sf_mcp_server_url: str = ""      # the MCP server URL from Setup -> MCP Servers (step B)
+    sf_mcp_client_id: str = ""       # the ECA Consumer Key
+    sf_mcp_client_secret: str = ""   # the ECA Consumer Secret
+    # Hosted MCP auth is OAuth2 + PKCE (authorization-code), NOT client-credentials — so the admin
+    # logs in ONCE via `python -m app.mcp.login` to mint this refresh token; the client swaps it for
+    # short-lived access tokens. Blank → the MCP client stays off even if the ids are set.
+    sf_mcp_refresh_token: str = ""
+    sf_mcp_token_url: str = ""        # blank → derived from the server url host (oauth2/token)
+
+    # E-com inventory service (build step 13). Decision A: product image + price + stock live in a
+    # SEPARATE Node/Next.js + Supabase service, not Salesforce. Blank → FakeInventory (offline
+    # default, every test); set the deployed base URL → RestInventory swaps in behind build_toolbox.
+    ecom_api_url: str = ""
+
     # Observability + the deep dependency-health route (build step 10). logfire_token was previously
     # dropped by extra="ignore"; the health check needs to see if it's configured. The cache TTL
     # (seconds) fronts /health/deps so a ~5s panel poll can't hammer deps or spend credit.
@@ -94,6 +134,28 @@ class Settings(BaseSettings):
     @property
     def always_human_set(self) -> set[str]:
         return {r.strip() for r in self.always_human_reasons.split(",") if r.strip()}
+
+    @property
+    def sf_rest_armed(self) -> bool:
+        """True when the client-credentials creds are set — swaps RestSalesforce in for the Apex
+        REST read + reschedule surface (build step 12). Same 3 creds as the trigger; reads are the
+        safe thing to turn on first (no mutation)."""
+        return bool(self.sf_login_url and self.sf_client_id and self.sf_client_secret)
+
+    @property
+    def sf_mcp_armed(self) -> bool:
+        """True only when the hosted-MCP server url + ECA id/secret + the one-time refresh token are
+        all set — then build_mcp_client connects (build step 12 Task 4). Refresh token is minted via
+        `python -m app.mcp.login` (OAuth2 + PKCE); without it the client stays off."""
+        return bool(self.sf_mcp_server_url and self.sf_mcp_client_id
+                    and self.sf_mcp_client_secret and self.sf_mcp_refresh_token)
+
+    @property
+    def sf_pubsub_armed(self) -> bool:
+        """True only when the creds are set AND the trigger is explicitly enabled — so arming the
+        REST reads (same creds) never starts the still-stubbed gRPC trigger task (build step 12,
+        OQ1). Leave sf_pubsub_enabled false until SalesforcePubSubSource.run is filled (step 9c)."""
+        return self.sf_rest_armed and self.sf_pubsub_enabled
 
 
 settings = Settings()
