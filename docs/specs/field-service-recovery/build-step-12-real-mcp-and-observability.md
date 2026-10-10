@@ -58,9 +58,17 @@ a second LLM vendor for the copilot (reuse the ladder).
 - [x] **Reconciliation** (2026-10-10) — `app/reconcile.py` `find_lingering()` + `GET /reconcile`
       (read-only; non-terminal cases not updated for N min, most-stuck first) + `test_reconcile.py`.
       Ceiling: no auto-heal.
-- [ ] `RestSalesforce` adapter behind `build_toolbox` (reads live, then reschedule).
-- [ ] New ECA (admin-based) + MCP client for SF Hosted MCP reads — recipe in [`hosted-mcp-setup.md`](hosted-mcp-setup.md).
-- [ ] E-com MCP server (with the e-com build).
+- [x] `RestSalesforce` adapter behind `build_salesforce` (2026-10-10) — reads + reschedule against
+      the Apex REST surface; armed by the 3 client-credentials creds; mock-first, 91 tests green.
+- [~] **MCP client + copilot tools BUILT 2026-10-11** (Option 2 custom Apex, admin-based). Code:
+      `apps/orchestrator/app/mcp/` (`SalesforceMcpClient` = refresh-token→access-token + Streamable-HTTP
+      session; `build_mcp_client` swap line; `login.py` = one-time OAuth2+PKCE to mint the refresh
+      token) + `GET /copilot/tools` + `apps/salesforce-apex/FieldFlowCopilotTools.cls` (2 invocable
+      tools). **99 tests green, ruff clean.** Finding: Hosted MCP auth is OAuth2+PKCE (no headless
+      client-creds) → the one-time `python -m app.mcp.login`. USER ACTIONS remain: create the ECA,
+      activate the MCP server over the Apex tools, run the login once. Then live-verify like the reads.
+- [x] E-com MCP server — shipped with the e-com build (2026-10-11); read-only `list_products` +
+      `get_stock` at `/api/mcp`. See [`build-step-13-ecom-inventory.md`](build-step-13-ecom-inventory.md).
 - [ ] Admin copilot route + panel chat (writes human-confirmed).
 
 ## 6. Updates
@@ -73,3 +81,65 @@ a second LLM vendor for the copilot (reuse the ladder).
 - **2026-10-10 (later)** — **Quick wins shipped:** Logfire wired + reconciliation sweep (tasks above),
   **79 tests green, ruff clean**. Hosted-MCP setup recipe written ([`hosted-mcp-setup.md`](hosted-mcp-setup.md)).
   Remaining 4 tasks blocked on org/e-com/panel (sequenced in §4).
+- **2026-10-10 (Task 3)** — **`RestSalesforce` adapter shipped** (mock-first, **91 tests green, ruff
+  clean**). Reads + reschedule run against the Apex REST class behind the same `SalesforceTools`
+  Protocol; `build_salesforce` is the one swap line. Open questions resolved by the user all "as
+  recommended": OQ1 (Pub/Sub trigger behind a new explicit `SF_PUBSUB_ENABLED` so arming REST reads
+  can't start the stubbed trigger), OQ2 (slot label → UTC ISO-8601, `SF_TIMEZONE`-aware), OQ3 (both
+  reads + reschedule built now; live reschedule gated on the Apex deploy), OQ4 (token cached, refetched
+  once on 401). **Not** MCP — the deterministic path, per §4 note. Explanation in §7.
+
+## 7. Explanation — the `RestSalesforce` adapter (Task 3)
+
+**1. What changed.** The orchestrator can now read from (and reschedule in) a **real Salesforce org**
+instead of only the in-memory fake — over the plain **Apex REST** class in `apps/salesforce-apex/`.
+It stays off until the 3 Salesforce creds are set, so every test and a keyless boot are unchanged.
+
+**2. Why it was needed.** Until now `app.state.salesforce` was hard-wired to `FakeSalesforce`. The
+story needs the recovery pipeline to touch the actual service org. This is the deterministic read +
+reschedule path (the LLM never invokes it) — distinct from the later Hosted-MCP copilot work.
+
+**3. How it works, step by step.**
+- `build_salesforce(settings)` returns `FakeSalesforce` when creds are blank, else `RestSalesforce` —
+  the one swap line, same pattern as `build_vonage` / `build_gateway`.
+- `RestSalesforce` logs in with **OAuth client-credentials** (server-to-server, no human): one POST
+  to `/services/oauth2/token` returns an `access_token` + the org's `instance_url`, both cached in
+  memory. On a `401` (expired token) it re-authenticates **once** and retries (OQ4).
+- **Reads** GET `/services/apexrest/fieldflow/{appointment,customer,asset,technician}/{id}` and return
+  the exact JSON shapes the fake returns (the Apex class mirrors them), so the graph is untouched. A
+  `404` → `None` so an action tool can refuse.
+- **Reschedule** is the one mutation. The slot's time only exists in its human label (e.g.
+  `"TODAY 15:00-17:00"`), so the graph now passes that label through `reschedule.confirm`. The adapter
+  converts it: parse the day word + `HH:MM-HH:MM`, build a timezone-aware datetime in `SF_TIMEZONE`
+  (default `Asia/Kolkata`), convert to **UTC** and format as ISO-8601 with a `Z` suffix — the one
+  unambiguous form Salesforce's Apex `JSON.deserialize(..., Datetime)` accepts (OQ2). Then POST
+  `{appointmentId, startTime, endTime}`.
+
+**4. Files / functions changed.**
+- `app/tools/salesforce.py` — new `RestSalesforce` (token + httpx calls), `slot_label_to_times`
+  helper, `build_salesforce` factory; `SalesforceTools.reschedule` + `FakeSalesforce.reschedule` gain
+  an optional `slot_label` (the fake ignores it).
+- `app/main.py` — the swap line: `app.state.salesforce = build_salesforce(settings)`.
+- `app/tools/registry.py` — `reschedule_confirm` threads `slotLabel` to the adapter.
+- `app/graph/build.py` — passes `slotLabel=chosen["label"]` into `reschedule.confirm`.
+- `app/config.py` — `sf_timezone`, `sf_pubsub_enabled`, `sf_rest_armed` property; `sf_pubsub_armed`
+  now also requires `sf_pubsub_enabled`.
+- `pyproject.toml` — `tzdata` (zoneinfo needs the IANA db on Windows).
+- `tests/test_salesforce_rest.py` (new, 12 tests via `httpx.MockTransport`); `tests/test_event_source.py`
+  updated for the new Pub/Sub gate. `.env.example` documents the new vars.
+
+**5. Important decisions.** Apex REST, not Hosted MCP, for this path — the LLM must never invoke a
+mutation (the core guardrail). The Pub/Sub trigger got its own opt-in flag so arming reads can't start
+the still-stubbed gRPC subscriber (OQ1). UTC-on-the-wire chosen over a floating local time so SF and
+every other system agree on the one instant (OQ2). Rejected: adding real start/end times back at the
+proposer (bigger change touching the graph) — parsing the label in the adapter is the smaller diff.
+
+**6. Tests / verification.** `uv run pytest -q` → **91 passed** (was 79); `uv run ruff check .` →
+clean; `uv run python -c "import app.main"` → OK. The new tests drive the real httpx code path with
+canned responses matching the Apex class — no org, no network.
+
+**7. Edge cases and limitations.** Live calls are **untested against a real org** — gated on the user
+deploying the Apex class + confirming assumptions A1–A4 (README §4). The label parser assumes a
+same-day window that doesn't cross midnight and `TODAY`/`TOMORROW` only (ponytail comment names the
+ceiling). The live **reschedule** write is the one truly gated action — reads are safe to turn on
+first.

@@ -47,8 +47,9 @@ the arranged copy — same content, readable.
 Backend is deep: **Spine → 1 (policy+graph+NFR-4/5/6) → 2 (Toolbox) → §3 (reasons) → 4 (RAG, live) →
 5 (LLM ladder, live) → 6 (commerce) → 9 (Razorpay) → 9b (Vonage RCS, LIVE-fired on a device
 2026-10-09) → 7 (failure demos) → 9c (SF Pub/Sub trigger, mock-first) → 8 (React panel) → 10
-(realistic catalog)**. **Step 12** (real MCP + Logfire god-eye + reconciliation): Logfire + reconcile
-**shipped 2026-10-10**; MCP-real + copilot sequenced. **79 tests green, ruff clean.**
+(realistic catalog) → 13 (e-com inventory service: Next.js + Supabase + MCP, shipped 2026-10-11)**.
+**Step 12** (real MCP + Logfire god-eye + reconciliation): Logfire + reconcile **shipped 2026-10-10**;
+SF-MCP + copilot sequenced. **94 tests green, ruff clean.**
 
 Per-step write-ups: `build-step-*.md`. Setup recipes: [`salesforce-handoff.md`](salesforce-handoff.md)
 §8 (provision the org + the 3 `SF_*` trigger vars), [`hosted-mcp-setup.md`](hosted-mcp-setup.md) (Oct-2026

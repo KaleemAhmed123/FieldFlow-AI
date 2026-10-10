@@ -429,13 +429,96 @@ change.* Mock-first: the seam + payload mapper are built + tested; `/sim` stays 
 uv run pytest -q tests/test_event_source.py
 ```
 
-- **Arming (gated, needs the org):** set `SF_LOGIN_URL` + `SF_CLIENT_ID` + `SF_CLIENT_SECRET` in
-  `.env` (all three → `sf_pubsub_armed`). Blank → no subscriber starts, `/sim` stays the trigger.
+- **Arming (gated, needs the org):** the trigger is a **separate opt-in** from the reads (step 12,
+  OQ1). Set `SF_LOGIN_URL` + `SF_CLIENT_ID` + `SF_CLIENT_SECRET` **and** `SF_PUBSUB_ENABLED=true` →
+  `sf_pubsub_armed`. The 3 creds alone only arm the **REST reads** (§3h), never this trigger.
 - The real gRPC subscription body is the **gated live step** — it needs the provisioned Field
-  Service org + the `Appointment_At_Risk__e` Platform Event + the pubsub deps. Arming the creds
-  before that raises a clear "gated live step" error on boot (fails loud by design).
+  Service org + the `Appointment_At_Risk__e` Platform Event + the pubsub deps. Enabling it before
+  that raises a clear "gated live step" error (fails loud by design).
 - Setup lives in [`docs/specs/field-service-recovery/salesforce-handoff.md`](docs/specs/field-service-recovery/salesforce-handoff.md);
   the step write-up is [`build-step-9c-salesforce-trigger.md`](docs/specs/field-service-recovery/build-step-9c-salesforce-trigger.md).
+
+## 3h. Salesforce reads + reschedule: the real org via Apex REST (build step 12)
+
+*`RestSalesforce` calls the Apex class in `apps/salesforce-apex/` with the SAME 3 `SF_*` creds. Blank
+→ `FakeSalesforce` (offline default). Set the 3 creds → the **reads** go live (safe); the
+**reschedule** write also needs the Apex class deployed. Not MCP — the deterministic path.*
+
+```bash
+# 1) FIRST create the custom field (the class won't COMPILE without it): Setup -> Object Manager ->
+#    Asset -> Fields & Relationships -> New -> Checkbox -> label "Warranty Active" (-> Warranty_Active__c).
+# 2) DEPLOY the Apex class (pick one):
+#    A) Developer Console: Setup gear -> Developer Console -> File > New > Apex Class "FieldFlowRest"
+#       -> paste apps/salesforce-apex/FieldFlowRest.cls -> File > Save.  (NB: do step 1 first.)
+#    B) sf CLI: sf project deploy start --source-dir apps/salesforce-apex --target-org <alias>
+#    Then grant the integration user API Enabled + Apex-class access (apps/salesforce-apex/README.md §3).
+# 3) SEED real demo data (reuses the .env SF_* creds; idempotent; prints the AppointmentNumbers):
+uv run --with simple-salesforce python apps/salesforce-apex/seed_demo_data.py
+# 4) ARM the reads: put the 3 SF_* creds (+ SF_TIMEZONE) in apps/orchestrator/.env, restart the app.
+#    Smoke-test a read with the curl in apps/salesforce-apex/README.md §5.
+```
+
+- Live calls are **untested against a real org** until you deploy + seed. The seed script fails loud
+  with Salesforce's exact error (usually a missing field/permission) — paste it back and we adjust.
+- Write-up: [`build-step-12-real-mcp-and-observability.md`](docs/specs/field-service-recovery/build-step-12-real-mcp-and-observability.md) §7.
+
+## 3j. Admin copilot: Salesforce Hosted MCP (build step 12 Task 4)
+
+*The AGENTIC path (separate from the deterministic Apex REST §3h). Salesforce HOSTS the MCP server;
+we build the client. Custom Apex tools + admin-based auth. Mock-first built; live needs the ECA +
+server + a one-time login.*
+
+```bash
+# USER (Salesforce UI), once — see docs/specs/field-service-recovery/hosted-mcp-setup.md:
+#  1. Deploy apps/salesforce-apex/FieldFlowCopilotTools.cls (same way as FieldFlowRest).
+#  2. Setup -> MCP Servers -> New -> Add Tools -> To Apex actions -> pick FieldFlowCopilotTools -> Activate -> copy URL.
+#  3. Create a NEW External Client App (ECA): OAuth2 + PKCE, scopes incl. mcp_api + refresh_token,
+#     callback http://localhost:8000/oauth/callback -> copy Consumer Key + Secret.
+#  4. Put SF_MCP_SERVER_URL + SF_MCP_CLIENT_ID + SF_MCP_CLIENT_SECRET in apps/orchestrator/.env.
+# ONE-TIME login (mints the refresh token; OAuth2+PKCE, no headless grant):
+cd apps/orchestrator && uv run python -m app.mcp.login     # prints SF_MCP_REFRESH_TOKEN -> paste into .env
+# SEE the live tools the copilot can discover:
+curl http://localhost:8000/copilot/tools                   # unarmed -> {"available": false, ...}
+```
+
+- Code: `apps/orchestrator/app/mcp/` (`client.py` + `login.py`) · route `GET /copilot/tools` ·
+  tools `apps/salesforce-apex/FieldFlowCopilotTools.cls`. Mock-first tests: `tests/test_mcp_client.py`.
+- Guardrail: copilot tools are **read-only**; any write stays human-confirmed. Chat UI = next.
+
+## 3i. E-com inventory service: the separate stock source + MCP (build step 13)
+
+*Decision A: inventory is a **separate source** — product image + price + stock live in a Next.js +
+Supabase app (`apps/ecom`), not Salesforce. The orchestrator reads/reserves over HTTP; blank
+`ECOM_API_URL` → `FakeInventory` (offline default, every test). Admin-only, no storefront.*
+
+```bash
+# --- E-COM SERVICE (apps/ecom) ---
+cd apps/ecom
+cp .env.example .env.local          # fill NEXT_PUBLIC_SUPABASE_URL + SUPABASE_SERVICE_ROLE_KEY
+#                                     (Supabase dashboard -> Settings -> API). service_role = server only.
+# 1) Create the tables: paste supabase/schema.sql into the Supabase SQL editor and run it.
+pnpm install
+pnpm seed                           # loads 86 parts from the orchestrator catalog; scarce parts -> qty 1
+pnpm dev                            # dashboard http://localhost:3000 · API /api/* · MCP /api/mcp
+
+# --- WIRE THE ORCHESTRATOR TO IT ---
+# In apps/orchestrator/.env:  ECOM_API_URL=http://localhost:3000  (then restart the app)
+# RestInventory swaps in for FakeInventory automatically — the graph/tests don't change.
+
+# --- The HTTP contract (what RestInventory calls) ---
+curl http://localhost:3000/api/stock/PCB-492                 # {partNo, locations:[{location,qty}]}
+curl -X POST http://localhost:3000/api/reserve -H 'content-type: application/json' \
+     -d '{"partNo":"PCB-492","qty":1}'                       # {ok:true|false}  (atomic; NFR-5)
+
+# --- NFR-5 race, live in a demo ---
+# On the dashboard hit "Grab" on the scarce part (drops it to 0) right before the pipeline reserves
+# it -> the reserve refuses instead of overselling. "Set" + a number restores stock.
+```
+
+- **Build-verified, live-DB pending your creds.** `pnpm build` compiles + type-checks; the live
+  seed/read/reserve round-trip needs your Supabase project. The MCP server (`/api/mcp`) is read-only
+  (`list_products`, `get_stock`) — its consumer is the admin copilot (next build #4).
+- Write-up: [`build-step-13-ecom-inventory.md`](docs/specs/field-service-recovery/build-step-13-ecom-inventory.md) §7.
 
 ## 4. Scenario → where it's proven
 
@@ -511,7 +594,9 @@ Next: **e-com inventory service** (Vercel + Supabase) · **9c live fire** (fill 
 the org is provisioned) · **Step 12** make the stack honest — **real MCP** (SF Hosted MCP + e-com MCP
 server + admin copilot; pipeline stays deterministic), **Logfire** god-eye view, **simple
 reconciliation** (see [`build-step-12-real-mcp-and-observability.md`](docs/specs/field-service-recovery/build-step-12-real-mcp-and-observability.md)) ·
-**Salesforce reads live** via `apps/salesforce-apex/` + the `RestSalesforce` adapter · **9b live fire** · **8** panel polish.
+**`RestSalesforce` adapter SHIPPED** (2026-10-10, mock-first, 91 green) — reads + reschedule over
+`apps/salesforce-apex/`, armed by the 3 `SF_*` creds; live calls gated on the Apex deploy · **9b live
+fire** · **8** panel polish.
 
 > **Webhook scope:** Razorpay payment = `/sim/payment` **poll** (no Razorpay webhook). **Vonage RCS
 > inbound (taps) + status = real webhooks** (9b). `/sim/*` stays as the offline twin for tests/demos.
@@ -537,7 +622,64 @@ Full detail per step: `docs/specs/field-service-recovery/build-step-*.md`.
 Paste these to drive the next pieces. House rules: **plan first, wait for go**, plain-English
 teaching, mock-first, and I'll always surface what you must set up.
 
-**★ CURRENT FRONT DOOR (2026-10-10) — paste this to continue in a fresh chat, nothing lost**
+**★ CURRENT FRONT DOOR (2026-10-11, build #4 copilot) — paste this to continue in a fresh chat**
+```
+Continue FieldFlow AI. Working dir C:\Users\hp\Desktop\RCS-VONAGE-POC.
+
+READ FIRST (in order): CLAUDE.md (HARD rules — plain teaching style; PLAN-FIRST + WAIT for my go on
+every open question; surface MY action items + which boring tasks to hand juniors; end every reply with
+What I achieved / What I need from you / Next steps; spec-driven under docs/specs/field-service-recovery/;
+playbook.md is the command home, update it in the SAME change); playbook.md §8 (this block) + §3i (e-com
+run) + §3h (SF Apex REST); docs/specs/field-service-recovery/build-step-12-real-mcp-and-observability.md
+(§3 Q1-Q6 + §4 plan — the copilot is item 6) + hosted-mcp-setup.md; memory fieldflow-build-progress.
+
+ONE IDEA: AI proposes -> deterministic policy decides -> human approves risk -> RCS is the customer
+control plane. The decision trace is the hero. GUARDRAIL for #4: the copilot is the ONE agentic piece
+(LLM picks tools over MCP); the recovery PIPELINE stays deterministic; every copilot WRITE is
+human-confirmed; MCP servers stay read-only for now.
+
+STATE (2026-10-11): backend deep + GREEN — from apps/orchestrator: `uv run pytest -q` -> 94 passed,
+`uv run ruff check .` clean (dev deps: `uv sync --extra dev`). Steps: Spine,1,2,§3,4(RAG live),5(LLM
+ladder live),6(commerce),9(Razorpay),9b(Vonage RCS live-fired),7(failures),9c(SF trigger mock-first),
+8(React panel),10(catalog),12(Logfire+reconcile+RestSalesforce Apex REST),13(E-COM SERVICE: apps/ecom
+Next.js+Supabase+MCP — SHIPPED, LIVE-VERIFIED end-to-end incl. the NFR-5 race, COMMITTED in 8 snapshots).
+E-com runs: cd apps/ecom && pnpm dev (dashboard :3000, MCP at /api/mcp read-only list_products+get_stock).
+Orchestrator .env has ECOM_API_URL=http://localhost:3000 so RestInventory is live.
+
+TASK = BUILD #4 THE ADMIN COPILOT (the justification for making MCP real):
+- A `/copilot` route on the orchestrator = a thin MCP CLIENT (python `mcp` SDK, lazy-import) that calls
+  tools over MCP and lets the LLM pick them. Reuse the existing Groq->Gemini ladder in app/llm/ (tool/
+  function-calling mode) — NO new LLM vendor.
+- Tool sources: (a) the e-com MCP server at {ECOM_API_URL}/api/mcp — LIVE NOW, read-only. (b) Salesforce
+  Hosted MCP for SF reads — needs a NEW External Client App (my action, hosted-mcp-setup.md); build the
+  client so e-com works today and SF plugs in when the ECA lands.
+- Panel chat UI in apps/control-panel (a new chat surface that POSTs to /copilot; keep MCP tokens
+  server-side, browser never holds them — build-step-12 Q3).
+- Mock-first: a FakeMcpClient (or recorded tool responses) so unit tests stay offline and the 94 stay
+  green; the real MCP client is armed only when creds/URLs are set. Writes are human-confirmed (propose ->
+  I approve -> execute), never an LLM-invoked mutation.
+
+HOUSE RULES: PLAN-FIRST — write build-step-14 (copilot) sections 1-5, restate the task, list open
+questions WITH your recommendation, and WAIT for my explicit go before any code. Keep 94 tests green;
+update playbook.md + the build-step Explanation in the SAME change; ask before editing context/** beyond
+approved notes. Do NOT fire a billed Vonage send, a live payment, or edit apps/orchestrator/.env without
+my explicit go (disarm live creds via process env for dry runs).
+
+MY OPEN ACTION ITEMS: (1) a NEW External Client App for SF Hosted MCP (hosted-mcp-setup.md) — separate
+from the Pub/Sub client-credentials creds. (2) SF org provisioning (salesforce-handoff.md §8) — unblocks
+#1 SF-reads-live + #5 the 9c gRPC live fire. (3) OPTIONAL local-dev fix: orchestrator crashes on Windows
+with a Postgres DATABASE_URL (psycopg needs SelectorEventLoop, not Windows' ProactorEventLoop —
+graph/checkpointer.py:51); RENDER/LINUX is fine; want the ~3-line run.py launcher fix?
+
+UNCOMMITTED (earlier cross-session work, still in the tree): RestSalesforce adapter + reconcile +
+event-source + logfire + apex + the shared hunks in main.py/config.py/.env.example + shared doc edits +
+.gitignore. ignoreit.txt = a stray transcript, gitignore it. Offer to commit these as small snapshots
+(shared files need `git add -p`) when I ask. The e-com step 13 is already fully committed.
+
+Ask me: start #4 now (and plan it), or commit the earlier work first?
+```
+
+**★ EARLIER FRONT DOOR (2026-10-10) — superseded by the #4 block above**
 ```
 Continue FieldFlow AI. Working dir C:\Users\hp\Desktop\RCS-VONAGE-POC.
 
@@ -550,11 +692,15 @@ command home); docs/specs/field-service-recovery/README.md (status + key decisio
 ONE IDEA: AI proposes -> deterministic policy decides -> human approves risk -> RCS is the customer
 control plane. The decision trace is the hero.
 
-STATE (2026-10-10): backend deep — Spine,1,2,§3,4(RAG live),5(LLM ladder live),6(commerce),9(Razorpay),
+STATE (2026-10-11): backend deep — Spine,1,2,§3,4(RAG live),5(LLM ladder live),6(commerce),9(Razorpay),
 9b(Vonage RCS LIVE-fired on a real device 2026-10-09),7(failure demos),9c(SF Pub/Sub trigger mock-first),
-8(React panel),10(catalog),12 quick wins(Logfire wired + reconciliation). From apps/orchestrator:
-`uv run pytest -q` -> 79 passed, `uv run ruff check .` clean, `uv run python -c "import app.main"` OK
-(dev deps: `uv sync --extra dev`). All mock-first/offline; only live fires gated.
+8(React panel),10(catalog),12 quick wins(Logfire wired + reconciliation) + 12 Task3(RestSalesforce
+adapter: SF reads+reschedule over Apex REST, mock-first) + 13(e-com inventory service: Next.js+Supabase+
+MCP at apps/ecom, RestInventory swap-in; LIVE-VERIFIED 2026-10-11 on a new Supabase project
+fieldflow-ecom — 86 parts, reserve race confirmed; user to set ECOM_API_URL in orchestrator .env). From
+apps/orchestrator: `uv run pytest -q` -> 94 passed, `uv run ruff check .` clean,
+`uv run python -c "import app.main"` OK (dev deps: `uv sync --extra dev`). E-com: cd apps/ecom &&
+pnpm install && pnpm build (green). All mock-first/offline; only live fires gated.
 
 DECISIONS (recorded in context docs + build-step-9c + build-step-12 + salesforce-handoff + hosted-mcp-setup):
 - Decision A: inventory is a SEPARATE e-com source (product image+price+stock); Salesforce owns the
@@ -574,12 +720,16 @@ MY ACTION ITEMS (the real blockers; I have org access + FS enabled + SF_* trigge
 3. For the copilot: a NEW External Client App for Hosted MCP (hosted-mcp-setup.md) — separate creds.
 
 NEXT BUILD ORDER (confirm/reorder; then PLAN-FIRST — restate, open questions w/ your recommendation, WAIT):
-1. RestSalesforce adapter -> SF reads LIVE (same client-credentials token works for Apex REST), then
-   reschedule. 2. SF Hosted MCP + real MCP client (reads) — needs the new ECA. 3. E-com service (Next.js
-   + Supabase; admin dashboard + NFR-5 grab-part knob) + its MCP server. 4. Admin copilot /copilot route +
-   panel chat (writes human-confirmed). 5. 9c live fire (fill SalesforcePubSubSource.run gRPC once org live).
+1. [DONE 2026-10-10] RestSalesforce adapter -> SF reads+reschedule over Apex REST (build_salesforce swap
+   line; armed by the 3 SF_* creds; live calls gated on the Apex deploy). 2. SF Hosted MCP + real MCP
+   client (reads) — needs the new ECA. 3. [DONE 2026-10-11] E-com service (Next.js + Supabase; admin
+   dashboard + NFR-5 grab-part knob) + its MCP server — apps/ecom, build-green; user action: Supabase
+   creds + schema.sql + pnpm seed + set ECOM_API_URL (playbook §3i). 4. Admin copilot /copilot route +
+   panel chat (writes human-confirmed) — now unblocked by #3. 5. 9c live fire (fill
+   SalesforcePubSubSource.run gRPC once org live; set
+   SF_PUBSUB_ENABLED=true).
 
-RULES: mock-first (keep 79 tests green; disarm live creds via process env for dry runs); PLAN-FIRST + WAIT;
+RULES: mock-first (keep 91 tests green; disarm live creds via process env for dry runs); PLAN-FIRST + WAIT;
 update playbook.md + the build-step Explanation in the SAME change; ask before editing context/** beyond
 approved notes; do NOT fire a billed Vonage send, a live payment, or edit apps/orchestrator/.env without my
 explicit go. Ask me which to start, then plan it.
