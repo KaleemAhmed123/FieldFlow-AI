@@ -11,6 +11,7 @@ from app.config import settings
 from app.db.models import Case
 from app.db.session import get_sessionmaker
 from app.health import check_deps
+from app.reconcile import find_lingering
 
 router = APIRouter(tags=["api"])
 
@@ -46,6 +47,15 @@ async def metrics() -> Response:
     return Response(generate_latest(), media_type=CONTENT_TYPE_LATEST)
 
 
+@router.get("/reconcile")
+async def reconcile(older_than_minutes: int = 30) -> dict:
+    """Reconciliation sweep (Step 12): non-terminal cases not updated for a while — stuck/lingering,
+    worth an operator's eye. Read-only; no auto-heal (the ponytail ceiling)."""
+    async with get_sessionmaker()() as session:
+        lingering = await find_lingering(session, older_than_minutes)
+    return {"olderThanMinutes": older_than_minutes, "count": len(lingering), "lingering": lingering}
+
+
 @router.get("/tools")
 async def list_tools(request: Request) -> dict:
     """The controlled MCP-shaped surface the graph is allowed to touch.
@@ -60,6 +70,19 @@ async def list_tools(request: Request) -> dict:
         "actions": [t for t in tools if t["kind"] == "action"],
         "note": "Read = safe lookup. Action = validated; the function decides, may refuse.",
     }
+
+
+@router.get("/copilot/tools")
+async def copilot_tools(request: Request) -> dict:
+    """The LIVE Salesforce Hosted MCP tools the copilot can discover (build step 12 Task 4 — the
+    agentic path, distinct from /tools above which is our deterministic surface). Needs the SF_MCP_*
+    creds + the one-time refresh token (`python -m app.mcp.login`), else returns unavailable."""
+    client = request.app.state.mcp
+    if client is None:
+        return {"available": False,
+                "detail": "MCP not armed — set SF_MCP_* + run `python -m app.mcp.login` "
+                          "(docs/specs/field-service-recovery/hosted-mcp-setup.md)."}
+    return {"available": True, "tools": await client.list_tools()}
 
 
 @router.get("/dlq")
