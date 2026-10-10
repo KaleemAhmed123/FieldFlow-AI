@@ -141,15 +141,19 @@ def build_toolbox(
         args=["partNo"], description="Atomically hold a part. Refuses if stock is gone (NFR-5).",
     )
 
-    def reschedule_confirm(appointmentId: str, slotId: str) -> ToolResult:
+    def reschedule_confirm(
+        appointmentId: str, slotId: str, slotLabel: str | None = None
+    ) -> ToolResult:
         # Authority ladder for a reschedule = appointment exists + case not terminal. Real SF adds
         # permission/territory/travel-time here once the org is wired; the shape stays the same.
+        # slotLabel carries the slot's time ("TODAY 15:00-17:00") — RestSalesforce needs it to build
+        # the real start/end; FakeSalesforce ignores it.
         appt = salesforce.get_appointment(appointmentId)
         if appt is None:
             return ToolResult(ok=False, reason=f"unknown appointment '{appointmentId}'")
         if appt.get("caseState") in TERMINAL_STATES:
             return ToolResult(ok=False, reason=f"case state {appt['caseState']} is terminal")
-        return ToolResult(ok=True, data=salesforce.reschedule(appointmentId, slotId))
+        return ToolResult(ok=True, data=salesforce.reschedule(appointmentId, slotId, slotLabel))
 
     tb.register(
         "reschedule.confirm", "action", reschedule_confirm,

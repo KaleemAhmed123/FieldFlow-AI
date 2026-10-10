@@ -291,7 +291,8 @@ def build_graph(
         # reschedule.confirm: an action tool; runs the ladder, may refuse (unknown/terminal case).
         confirmed = toolbox.call("reschedule.confirm",
                                  appointmentId=state["event"]["appointmentId"],
-                                 slotId=chosen["slotId"])
+                                 slotId=chosen["slotId"],
+                                 slotLabel=chosen["label"])  # the time info the real org needs
         if not confirmed.ok:
             log.info("graph.reschedule_refused", reason=confirmed.reason)
             return Command(goto="offer_to_customer",
