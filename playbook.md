@@ -638,10 +638,11 @@ control plane. The decision trace is the hero. GUARDRAIL for #4: the copilot is 
 (LLM picks tools over MCP); the recovery PIPELINE stays deterministic; every copilot WRITE is
 human-confirmed; MCP servers stay read-only for now.
 
-STATE (2026-10-11): backend deep + GREEN — from apps/orchestrator: `uv run pytest -q` -> 94 passed,
+STATE (2026-10-11): backend deep + GREEN — from apps/orchestrator: `uv run pytest -q` -> 99 passed,
 `uv run ruff check .` clean (dev deps: `uv sync --extra dev`). Steps: Spine,1,2,§3,4(RAG live),5(LLM
 ladder live),6(commerce),9(Razorpay),9b(Vonage RCS live-fired),7(failures),9c(SF trigger mock-first),
-8(React panel),10(catalog),12(Logfire+reconcile+RestSalesforce Apex REST),13(E-COM SERVICE: apps/ecom
+8(React panel),10(catalog),12(Logfire+reconcile+RestSalesforce Apex REST reads+reschedule LIVE-VERIFIED;
++ Hosted-MCP copilot client/tools built mock-first, §3j),13(E-COM SERVICE: apps/ecom
 Next.js+Supabase+MCP — SHIPPED, LIVE-VERIFIED end-to-end incl. the NFR-5 race, COMMITTED in 8 snapshots).
 E-com runs: cd apps/ecom && pnpm dev (dashboard :3000, MCP at /api/mcp read-only list_products+get_stock).
 Orchestrator .env has ECOM_API_URL=http://localhost:3000 so RestInventory is live.
