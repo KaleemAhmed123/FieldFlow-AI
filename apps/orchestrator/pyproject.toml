@@ -28,6 +28,9 @@ dependencies = [
     "langgraph-checkpoint-postgres>=3.1.2",
     "psycopg[binary]>=3.3.6",
     "pyjwt[crypto]>=2.8",
+    "logfire[fastapi]>=5.1.1",
+    "tzdata>=2024.1",  # IANA tz db for zoneinfo (Windows has none) — slot-label → UTC (step 12)
+    "mcp>=1.2",         # MCP client SDK for the Salesforce Hosted MCP copilot path (step 12 Task 4)
 ]
 
 [project.optional-dependencies]
