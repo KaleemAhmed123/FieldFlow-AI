@@ -470,8 +470,9 @@ server + a one-time login.*
 
 ```bash
 # USER (Salesforce UI), once — see docs/specs/field-service-recovery/hosted-mcp-setup.md:
-#  1. Deploy apps/salesforce-apex/FieldFlowCopilotTools.cls (same way as FieldFlowRest).
-#  2. Setup -> MCP Servers -> New -> Add Tools -> To Apex actions -> pick FieldFlowCopilotTools -> Activate -> copy URL.
+#  1. Tools: 8 classes in apps/salesforce-apex/copilot/ — ALREADY DEPLOYED + compile-verified via the
+#     Tooling API (one @InvocableMethod PER class — Salesforce allows only one). Nothing to paste.
+#  2. Setup -> MCP Servers -> New -> Add Tools -> To Apex actions -> add the 8 FFCopilot_* actions -> Activate -> copy URL.
 #  3. Create a NEW External Client App (ECA): OAuth2 + PKCE, scopes incl. mcp_api + refresh_token,
 #     callback http://localhost:8000/oauth/callback -> copy Consumer Key + Secret.
 #  4. Put SF_MCP_SERVER_URL + SF_MCP_CLIENT_ID + SF_MCP_CLIENT_SECRET in apps/orchestrator/.env.
@@ -482,7 +483,10 @@ curl http://localhost:8000/copilot/tools                   # unarmed -> {"availa
 ```
 
 - Code: `apps/orchestrator/app/mcp/` (`client.py` + `login.py`) · route `GET /copilot/tools` ·
-  tools `apps/salesforce-apex/FieldFlowCopilotTools.cls`. Mock-first tests: `tests/test_mcp_client.py`.
+  tools `apps/salesforce-apex/copilot/FFCopilot_*.cls` (8, read-only, deployed + data-verified vs the
+  seeded org). Mock-first tests: `tests/test_mcp_client.py`.
+- The 8 tools: appointment health · needing attention · customer appointments · technician schedule ·
+  asset history · unassigned · out-of-warranty · status counts.
 - Guardrail: copilot tools are **read-only**; any write stays human-confirmed. Chat UI = next.
 
 ## 3i. E-com inventory service: the separate stock source + MCP (build step 13)
@@ -622,7 +626,7 @@ Full detail per step: `docs/specs/field-service-recovery/build-step-*.md`.
 Paste these to drive the next pieces. House rules: **plan first, wait for go**, plain-English
 teaching, mock-first, and I'll always surface what you must set up.
 
-**★ CURRENT FRONT DOOR (2026-10-11, build #4 copilot) — paste this to continue in a fresh chat**
+**★ CURRENT FRONT DOOR (2026-10-11, SF reads+reschedule LIVE + MCP copilot plumbing done; next=copilot chat) — paste this to continue in a fresh chat**
 ```
 Continue FieldFlow AI. Working dir C:\Users\hp\Desktop\RCS-VONAGE-POC.
 
@@ -641,43 +645,61 @@ human-confirmed; MCP servers stay read-only for now.
 STATE (2026-10-11): backend deep + GREEN — from apps/orchestrator: `uv run pytest -q` -> 99 passed,
 `uv run ruff check .` clean (dev deps: `uv sync --extra dev`). Steps: Spine,1,2,§3,4(RAG live),5(LLM
 ladder live),6(commerce),9(Razorpay),9b(Vonage RCS live-fired),7(failures),9c(SF trigger mock-first),
-8(React panel),10(catalog),12(Logfire+reconcile+RestSalesforce Apex REST reads+reschedule LIVE-VERIFIED;
-+ Hosted-MCP copilot client/tools built mock-first, §3j),13(E-COM SERVICE: apps/ecom
-Next.js+Supabase+MCP — SHIPPED, LIVE-VERIFIED end-to-end incl. the NFR-5 race, COMMITTED in 8 snapshots).
-E-com runs: cd apps/ecom && pnpm dev (dashboard :3000, MCP at /api/mcp read-only list_products+get_stock).
-Orchestrator .env has ECOM_API_URL=http://localhost:3000 so RestInventory is live.
+8(React panel),10(catalog),13(E-COM SERVICE apps/ecom Next.js+Supabase+MCP — SHIPPED+LIVE+COMMITTED,
+other chat), and STEP 12 (SF + MCP) now deep:
+- RestSalesforce (Apex REST) reads + reschedule are LIVE-VERIFIED against the real org
+  (astreait88-dev-ed): seeded via apps/salesforce-apex/seed_demo_data.py -> SA-0001 (in-warranty) +
+  SA-0002 (out-of-warranty); reschedule moved SchedStartTime for real. Two Apex bugs fixed live
+  (`in` reserved word; reschedule must update a FRESH ServiceAppointment(Id=...) w/ only the 2 time
+  fields). Field-edit note in apps/salesforce-apex/README.md §3.
+- Hosted-MCP admin-copilot PLUMBING built mock-first + deployed: app/mcp/client.py (SalesforceMcpClient:
+  refresh-token->access-token + Streamable-HTTP session via `mcp` SDK, lazy) + app/mcp/login.py (one-time
+  OAuth2+PKCE) + build_mcp_client swap line + GET /copilot/tools route + tests/test_mcp_client.py (+5).
+  8 READ-ONLY tools as 8 classes in apps/salesforce-apex/copilot/FFCopilot_*.cls (appointment-health,
+  needing-attention, customer-appts, technician-schedule, asset-history, unassigned, out-of-warranty,
+  status-counts) — DEPLOYED + data-verified via Tooling API, declared `global` (required for MCP).
+- Also: CRM-AI-OPPORTUNITIES.md (repo root) = top-5 CRM problems strategy doc.
+E-com runs: cd apps/ecom && pnpm dev (dashboard :3000, MCP /api/mcp read-only). Orchestrator .env has
+ECOM_API_URL=http://localhost:3000 so RestInventory is live.
 
-TASK = BUILD #4 THE ADMIN COPILOT (the justification for making MCP real):
-- A `/copilot` route on the orchestrator = a thin MCP CLIENT (python `mcp` SDK, lazy-import) that calls
-  tools over MCP and lets the LLM pick them. Reuse the existing Groq->Gemini ladder in app/llm/ (tool/
-  function-calling mode) — NO new LLM vendor.
-- Tool sources: (a) the e-com MCP server at {ECOM_API_URL}/api/mcp — LIVE NOW, read-only. (b) Salesforce
-  Hosted MCP for SF reads — needs a NEW External Client App (my action, hosted-mcp-setup.md); build the
-  client so e-com works today and SF plugs in when the ECA lands.
-- Panel chat UI in apps/control-panel (a new chat surface that POSTs to /copilot; keep MCP tokens
-  server-side, browser never holds them — build-step-12 Q3).
-- Mock-first: a FakeMcpClient (or recorded tool responses) so unit tests stay offline and the 94 stay
-  green; the real MCP client is armed only when creds/URLs are set. Writes are human-confirmed (propose ->
-  I approve -> execute), never an LLM-invoked mutation.
+APEX RULES LEARNED (don't repeat): one @InvocableMethod PER class; class+method+@InvocableVariable fields
+must be `global` not `public` for Hosted-MCP discovery. SF Hosted MCP auth = OAuth2+PKCE (no headless
+client-creds) -> the one-time `python -m app.mcp.login`. Run-as user of the client-creds flow =
+shaam@astreait.com (System Administrator), NOT the browser admin.
 
-HOUSE RULES: PLAN-FIRST — write build-step-14 (copilot) sections 1-5, restate the task, list open
-questions WITH your recommendation, and WAIT for my explicit go before any code. Keep 94 tests green;
-update playbook.md + the build-step Explanation in the SAME change; ask before editing context/** beyond
-approved notes. Do NOT fire a billed Vonage send, a live payment, or edit apps/orchestrator/.env without
-my explicit go (disarm live creds via process env for dry runs).
+MY OPEN ACTION ITEMS (the current blocker for the live copilot):
+1. Stand up the SF Hosted MCP server: Setup -> MCP Servers -> "Salesforce Servers" TAB (not External)
+   -> "Add MCP Server" (top-right) -> create a Salesforce MCP server -> add the 8 FFCopilot_* Apex
+   actions -> Activate -> copy the server URL. (If it demands wrapping each as an Agent Action in
+   Agentforce Studio first, tell Claude.)
+2. Create a NEW External Client App (ECA) for MCP (separate from the Pub/Sub client-creds): OAuth2+PKCE,
+   scopes incl. mcp_api + refresh_token, callback http://localhost:8000/oauth/callback -> Consumer
+   Key+Secret. Put SF_MCP_SERVER_URL/CLIENT_ID/CLIENT_SECRET in apps/orchestrator/.env, then
+   `cd apps/orchestrator && uv run python -m app.mcp.login` -> paste SF_MCP_REFRESH_TOKEN. (playbook §3j)
+3. SF org provisioning (salesforce-handoff.md §8) -> unblocks the 9c Pub/Sub gRPC live fire (set
+   SF_PUBSUB_ENABLED=true only once SalesforcePubSubSource.run is filled).
+4. OPTIONAL: orchestrator crashes on Windows w/ a Postgres DATABASE_URL (psycopg needs
+   SelectorEventLoop; graph/checkpointer.py) — Render/Linux fine; want the ~3-line run.py fix?
 
-MY OPEN ACTION ITEMS: (1) a NEW External Client App for SF Hosted MCP (hosted-mcp-setup.md) — separate
-from the Pub/Sub client-credentials creds. (2) SF org provisioning (salesforce-handoff.md §8) — unblocks
-#1 SF-reads-live + #5 the 9c gRPC live fire. (3) OPTIONAL local-dev fix: orchestrator crashes on Windows
-with a Postgres DATABASE_URL (psycopg needs SelectorEventLoop, not Windows' ProactorEventLoop —
-graph/checkpointer.py:51); RENDER/LINUX is fine; want the ~3-line run.py launcher fix?
+NEXT TASK (after I arm the MCP creds): BUILD THE COPILOT CHAT (build-step-14). Plumbing is done; what's
+left = (a) a `/copilot` chat route that runs the Groq->Gemini ladder (app/llm/) in TOOL-CALLING mode over
+the MCP client(s) — e-com MCP (/api/mcp) is live NOW, SF Hosted MCP plugs in once #1+#2 land; (b) a panel
+chat UI in apps/control-panel that POSTs to /copilot (MCP tokens stay server-side). Writes human-confirmed,
+never an LLM-invoked mutation. Also: once #1+#2 done, Claude live-verifies GET /copilot/tools first.
 
-UNCOMMITTED (earlier cross-session work, still in the tree): RestSalesforce adapter + reconcile +
-event-source + logfire + apex + the shared hunks in main.py/config.py/.env.example + shared doc edits +
-.gitignore. ignoreit.txt = a stray transcript, gitignore it. Offer to commit these as small snapshots
-(shared files need `git add -p`) when I ask. The e-com step 13 is already fully committed.
+HOUSE RULES: PLAN-FIRST — write build-step-14 sections 1-5, restate the task, list open questions WITH
+your recommendation, and WAIT for my explicit go before any code. Keep 99 tests green; update playbook.md
++ the build-step Explanation in the SAME change; ask before editing context/** beyond approved notes. Do
+NOT fire a billed Vonage send, a live payment, or edit apps/orchestrator/.env without my explicit go.
 
-Ask me: start #4 now (and plan it), or commit the earlier work first?
+UNCOMMITTED (earlier cross-session work, still in the tree): RestSalesforce adapter + seed script + MCP
+client/login + 8 copilot Apex classes + reconcile + event-source + logfire + apex + CRM-AI-OPPORTUNITIES.md
++ shared hunks in main.py/config.py/.env.example/playbook + doc edits + .gitignore. ignoreit.txt = stray
+transcript, gitignore it. Offer to commit as small snapshots (shared files need `git add -p`) when I ask.
+E-com step 13 is already fully committed.
+
+Ask me: arm the MCP creds now (I do action items #1+#2), or start build-step-14 copilot chat against the
+LIVE e-com MCP first, or commit the earlier work?
 ```
 
 **★ EARLIER FRONT DOOR (2026-10-10) — superseded by the #4 block above**

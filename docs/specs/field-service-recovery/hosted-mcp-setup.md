@@ -23,8 +23,13 @@ Just do step C (External Client App) + D (connect) below and point the client at
 Use when you want curated, described tools (e.g. "appointment health", "stuck cases") instead of raw
 SObject reads.
 
+> **Rule learned the hard way:** a class may hold **only ONE `@InvocableMethod`** ("Only one method
+> per type can be defined with: InvocableMethod"). So **one tool = one class**. FieldFlow's 8 copilot
+> tools live as 8 classes in [`apps/salesforce-apex/copilot/`](../../apps/salesforce-apex/copilot/)
+> (`FFCopilot_*`), already deployed + data-verified against the org via the Tooling API.
+
 **A. Write an Apex `@InvocableMethod` tool** (the **description is what the LLM reads to decide to
-call it** — write it well):
+call it** — write it well; ONE invocable per class):
 ```apex
 public with sharing class FieldFlowCopilotTools {
     public class In  { @InvocableVariable(required=true) public String appointmentId; }
