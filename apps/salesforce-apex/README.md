@@ -15,6 +15,9 @@ REST**. The orchestrator's Toolbox calls it over HTTPS; the authority ladder sta
   `apps/orchestrator/app/tools/salesforce.py` (`FakeSalesforce`).
 - `FieldFlowRest.cls-meta.xml` — metadata (needed for an SFDX deploy).
 
+> **⚠ Do §3's `Asset.Warranty_Active__c` checkbox FIRST.** The class's SOQL selects that field, so it
+> **won't compile** until the field exists ("No such column 'Warranty_Active__c'"). Field → then deploy.
+
 ## 2. Deploy it (pick ONE — both end up the same)
 
 **Route A — Developer Console (fastest, no tooling):**
@@ -35,7 +38,11 @@ sf project deploy start --source-dir apps/salesforce-apex --target-org <your-org
 - [ ] **Integration-user access**: the user your Connected App runs as (the client-credentials
       "Run As" user, [salesforce-handoff.md §8](../../docs/specs/field-service-recovery/salesforce-handoff.md))
       needs **API Enabled** + Apex class access to `FieldFlowRest` (add it to their Permission Set →
-      Apex Class Access) + read on the queried objects + edit on ServiceAppointment.
+      Apex Class Access) + read on the queried objects + **edit on ServiceAppointment AND field-edit
+      on its `SchedStartTime` + `SchedEndTime`** — without this field-level grant the reschedule WRITE
+      fails with *"fields being inaccessible on Sobject ServiceAppointment"* (reads still work). Grant
+      it: Permission Set → Object Settings → Service Appointments → enable Edit on the object + on the
+      Scheduled Start / Scheduled End fields.
 - [ ] **Demo data chain** exists (Account+Contact, Asset, ServiceResource+Territory, WorkOrder +
       ServiceAppointment linked) — handoff §8 step D.
 

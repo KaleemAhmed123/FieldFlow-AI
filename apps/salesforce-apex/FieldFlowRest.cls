@@ -61,15 +61,20 @@ global with sharing class FieldFlowRest {
                 fail(res, 404, 'unknown action "' + path + '"');
                 return;
             }
-            Map<String, Object> in =
+            Map<String, Object> payload =
                 (Map<String, Object>) JSON.deserializeUntyped(RestContext.request.requestBody.toString());
-            String apptId = (String) in.get('appointmentId');
-            ServiceAppointment sa = findAppointment(apptId);
-            if (sa == null) { fail(res, 404, 'appointment "' + apptId + '" not found'); return; }
+            String apptId = (String) payload.get('appointmentId');
+            ServiceAppointment found = findAppointment(apptId);
+            if (found == null) { fail(res, 404, 'appointment "' + apptId + '" not found'); return; }
             // The slotId -> start/end mapping is done in our Python adapter (we own the slot catalog),
             // so this endpoint takes concrete times. Direct field update (handoff OQ-D) for the POC.
-            sa.SchedStartTime = parseIso((String) in.get('startTime'));
-            sa.SchedEndTime = parseIso((String) in.get('endTime'));
+            // Update a FRESH record with ONLY the id + the two time fields. Re-saving the whole queried
+            // record (AppointmentNumber/Status/ParentRecordId loaded) trips the Field Service field-
+            // access check in the integration session ("fields being inaccessible"); a minimal update
+            // carries only updatable fields and avoids it (matches a plain 2-field REST update).
+            ServiceAppointment sa = new ServiceAppointment(Id = found.Id);
+            sa.SchedStartTime = parseIso((String) payload.get('startTime'));
+            sa.SchedEndTime = parseIso((String) payload.get('endTime'));
             update sa;
             res.responseBody = Blob.valueOf(JSON.serialize(new Map<String, Object>{
                 'appointmentId' => apptId, 'status' => 'RESCHEDULED'
