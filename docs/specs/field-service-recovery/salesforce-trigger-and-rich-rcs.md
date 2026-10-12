@@ -141,9 +141,15 @@ Add metadata only when a scenario needs it (no speculative objects/fields).
   green (+1), ruff clean; panel build green. (2026-10-13) NOTE: **Calendar + View belong on a
   *post-choice* confirmation card** (putting them on a pre-choice offer is wrong and would break the
   e2e card asserts) → moved to slice 3 with the confirmation message.
-- [ ] Slice 3 — per-archetype message sets (delay / parts / complex) + a **confirmation card** at
-  verify carrying **Add to Calendar** + **Dial** + **View** (completes the action coverage).
-- [ ] Slice 4 — panel rendering of the new card kinds + actions.
+- [x] **Slice 3 — confirmation card + per-archetype ends.** `verify` now sends a `kind="confirmation"`
+  card with an **archetype-aware body** (`_confirmation_body`: part-fit / specialist / simple
+  reschedule) and **Add to Calendar** + one-tap **Call** actions (`_confirmation_actions`); the chosen
+  slot is threaded via `chosenSlot`. Open-URL is already shown by the payment card, so no stand-in
+  "View". Panel renders the confirmation (body + chips, no slots). Each archetype now has a distinct
+  start (slice 1 body) and end (this). Happy-path test asserts the confirmation + its actions.
+  Backend 107 green, ruff clean; panel build green. (2026-10-13)
+- [x] **Slice 4 — panel rendering** folded into slices 1–3: `RcsCardPreview` renders body, action
+  chips (icons), and the confirmation kind. Further visual polish optional.
 - [ ] Update `playbook.md` rich-message how-to once the slices settle.
 
 ## 6. Updates
