@@ -44,8 +44,9 @@ class Proposal:
     """What a proposer returns. `options` is untrusted — policy still validates every one."""
     options: list[dict]
     llm_confidence: float          # the model's self-rating (clamped later, never trusted raw)
-    explanation: str
-    provider: str                  # "groq" | "gemini" | "deterministic"
+    explanation: str               # ops-facing: the strategy (why these slots). Shown in the trace.
+    customer_message: str = ""     # customer-facing: the warm, reason-aware RCS body (slice 1)
+    provider: str = "deterministic"  # "groq" | "gemini" | "deterministic"
     archetype: str = "delay"
     degraded: bool = False         # True if a configured LLM was tried and we fell back
     rate_limit_note: str | None = None
@@ -62,6 +63,24 @@ class RateLimited(Exception):
 # A provider is any callable (reason, context, knowledge) -> Proposal. It may raise RateLimited or
 # any other exception; the ladder catches both and moves to the next rung.
 ProviderFn = Callable[[str, dict, list], Proposal]
+
+
+# Warm, reason-aware customer copy per archetype — the deterministic floor for the RCS body (slice
+# 1). The live LLM writes its own; this is the always-available fallback and the offline/test voice.
+def customer_message_for(reason: str, context: dict) -> str:
+    archetype = REASON_ARCHETYPE.get(reason, "delay")
+    tech = context.get("technician", {}).get("name") or "your technician"
+    model = context.get("asset", {}).get("model") or "appliance"
+    if archetype == "parts":
+        return (f"Good news — we know how to fix your {model}, but it needs a part fitted. "
+                f"Here are the earliest slots once the part's in, plus a loaner option so you're "
+                f"not left waiting. Tap whichever suits you.")
+    if archetype == "complex":
+        return (f"Your {model} needs a specialist to take a closer look before we proceed. "
+                f"I've lined up a couple of times below — a team member will confirm the details "
+                f"with you shortly.")
+    return (f"Sorry — {tech} is running behind on your {model} service today. "
+            f"Here are the earliest new slots I can offer. Tap one that works for you.")
 
 
 def deterministic_proposal(reason: str, context: dict) -> Proposal:
@@ -93,6 +112,7 @@ def deterministic_proposal(reason: str, context: dict) -> Proposal:
 
     return Proposal(
         options=options, llm_confidence=SELF_RATING[archetype], explanation=explanation,
+        customer_message=customer_message_for(reason, context),
         provider="deterministic", archetype=archetype,
     )
 
@@ -119,6 +139,7 @@ PROPOSAL_SCHEMA = {
         },
         "confidence": {"type": "number"},
         "explanation": {"type": "string"},
+        "customer_message": {"type": "string"},
     },
     "required": ["options", "confidence", "explanation"],
 }
@@ -145,7 +166,10 @@ def build_prompt(reason: str, context: dict, knowledge: list) -> tuple[str, str]
         "RULES: (1) For a 'delay' archetype the fix is purely rescheduling - NEVER attach a part "
         "(omit partNo on every option). (2) If a part is genuinely needed, use ONLY a partNo from "
         "the asset's catalog parts listed below - never invent one. (3) Prefer options that do not "
-        "depend on a scarce part. Reply ONLY as JSON matching the schema."
+        "depend on a scarce part. (4) Also write `customer_message`: a short, warm WhatsApp-style "
+        "note to the CUSTOMER (1-2 sentences, no jargon) - apologise if we caused a delay, say "
+        "briefly why, reassure them, and invite them to pick a slot below. Use the customer/asset "
+        "details. Reply ONLY as JSON matching the schema."
     )
     user = (
         f"Reason: {reason} (archetype: {archetype})\n"
@@ -156,7 +180,7 @@ def build_prompt(reason: str, context: dict, knowledge: list) -> tuple[str, str]
         f"Retrieved knowledge:\n{cites}\n\n"
         f"Suggested options to refine:\n{json.dumps(seed.options)}\n"
         "Return JSON: {options:[{slotId,label,technician,note,requiredSkill?,partNo?}], "
-        "confidence:number, explanation:string}."
+        "confidence:number, explanation:string, customer_message:string}."
     )
     return system, user
 
@@ -186,9 +210,14 @@ def parse_proposal(
             item.pop("partNo", None)  # ground out: delay needs no part; unknown parts are invented
         clean.append(item)
     conf = float(data.get("confidence", 0.0))
+    # Customer message: trust the model's if present, else fall back to our warm template so the RCS
+    # body is never empty (the model sometimes omits it; the deterministic copy always lands).
+    message = (str(data.get("customer_message", "")).strip()
+               or customer_message_for(reason, context or {}))
     return Proposal(
         options=clean, llm_confidence=max(0.0, min(1.0, conf)),
         explanation=str(data.get("explanation", "")).strip() or "(no explanation)",
+        customer_message=message,
         provider=provider, archetype=REASON_ARCHETYPE.get(reason, "delay"),
     )
 
