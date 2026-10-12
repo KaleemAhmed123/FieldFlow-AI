@@ -1,7 +1,9 @@
 import {
   CalendarPlus,
+  Camera,
   CreditCard,
   ExternalLink,
+  FileText,
   MapPin,
   MessageSquare,
   Phone,
@@ -17,6 +19,8 @@ const ACTION_ICON: Record<string, typeof MapPin> = {
   dial: Phone,
   calendar: CalendarPlus,
   view: ExternalLink,
+  photo: Camera,
+  pdf: FileText,
 };
 
 // A phone mock of what the customer sees over RCS — the "customer control plane". The carousel's

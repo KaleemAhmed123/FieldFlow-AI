@@ -56,6 +56,8 @@ export interface DecisionTrace {
   policyResult?: string;
   removed?: RemovedOption[];
   commerce?: CommerceTrace;
+  photoVerified?: { model?: string; matchesAsset?: boolean; source?: string };
+  serviceReport?: { url?: string; source?: string };
 }
 
 export interface CaseContext {

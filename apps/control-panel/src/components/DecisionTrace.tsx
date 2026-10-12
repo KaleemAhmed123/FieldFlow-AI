@@ -1,4 +1,13 @@
-import { AlertTriangle, BookOpen, Braces, Scissors, Sparkles, Wrench } from "lucide-react";
+import {
+  AlertTriangle,
+  BookOpen,
+  Braces,
+  Camera,
+  FileText,
+  Scissors,
+  Sparkles,
+  Wrench,
+} from "lucide-react";
 
 import { ConfidenceMeter } from "@/components/ConfidenceMeter";
 import { Badge } from "@/components/ui/badge";
@@ -81,6 +90,36 @@ export function DecisionTrace({ trace }: { trace?: Trace }) {
         )}
 
         <ConfidenceMeter breakdown={trace.confidenceBreakdown} confidence={trace.confidence} />
+
+        {trace.photoVerified && (
+          <p className="flex items-center gap-2 text-sm text-fg">
+            <Camera className="h-3.5 w-3.5 text-accent" />
+            <span>
+              Photo verified: <span className="font-medium">{trace.photoVerified.model}</span>
+              {trace.photoVerified.matchesAsset ? " — matches the asset" : ""}
+              <span className="ml-1 font-mono text-[10px] text-faint">
+                ({trace.photoVerified.source})
+              </span>
+            </span>
+          </p>
+        )}
+
+        {trace.serviceReport?.url && (
+          <p className="flex items-center gap-2 text-sm text-fg">
+            <FileText className="h-3.5 w-3.5 text-accent" />
+            <a
+              href={trace.serviceReport.url}
+              target="_blank"
+              rel="noreferrer"
+              className="underline decoration-dotted underline-offset-2 hover:text-accent"
+            >
+              Service report (PDF)
+            </a>
+            <span className="font-mono text-[10px] text-faint">
+              ({trace.serviceReport.source})
+            </span>
+          </p>
+        )}
 
         {reasons.length > 0 && (
           <div className="space-y-1.5">
