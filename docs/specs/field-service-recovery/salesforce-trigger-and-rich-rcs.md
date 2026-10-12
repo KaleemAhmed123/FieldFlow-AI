@@ -150,6 +150,15 @@ Add metadata only when a scenario needs it (no speculative objects/fields).
   Backend 107 green, ruff clean; panel build green. (2026-10-13)
 - [x] **Slice 4 — panel rendering** folded into slices 1–3: `RcsCardPreview` renders body, action
   chips (icons), and the confirmation kind. Further visual polish optional.
+- [x] **Slice 5 — photo request + inbound image (parts).** Parts offers get a "Send a photo of the
+  label" chip; `case_service.record_photo` runs **simulated OCR** (= the asset's model, matched vs
+  Salesforce) and writes `photoVerified` onto the decision trace; `/sim/photo` is the offline twin;
+  panel `DecisionTrace` shows it. (2026-10-13) *(Real inbound-image webhook needs a device→case map —
+  deferred; `/sim/photo` is the demo trigger.)*
+- [x] **Slice 6 — service-report PDF (confirmation).** `verify` attaches a **Service report (PDF)**
+  open-URL action to the confirmation + a `serviceReport` note on the trace (SRS FR-13b); panel renders
+  a PDF link. URL is a single POC placeholder (a real per-case PDF is the gated step). (2026-10-13)
+  Backend 108 tests green (+1), ruff clean; panel build green. Playbook §3g-c added.
 - [ ] Update `playbook.md` rich-message how-to once the slices settle.
 
 ## 6. Updates

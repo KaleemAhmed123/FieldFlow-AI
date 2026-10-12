@@ -485,6 +485,28 @@ uv run python apps/salesforce-apex/deploy_sf.py \
 - **Still TODO (step 3):** the Apex trigger + class + test files, a `FieldFlow` Named Credential
   (URL + secret header), then tick `At_Risk__c` on a seeded appointment for the first live fire.
 
+### 3g-c. Rich RCS messages (Phase 2)
+
+*The customer card is no longer a bare slot list. Each case now reads as a full story:*
+
+- **AI message body** — a warm, reason-aware note written by the LLM (deterministic fallback), shown
+  above the slots. Real send leads with it as an RCS text, then the carousel.
+- **Action chips** — every offer carries **Share Location** + **Call technician**; a **parts** offer
+  also invites a **photo of the unit label** (the inbound-image primitive).
+- **Confirmation card** — on success the customer gets an archetype-aware confirmation with **Add to
+  Calendar**, **Call**, and a **Service report (PDF)** link (SRS FR-13b).
+- **Photo (parts) demo** — after a parts case is OPTIONS_SENT, simulate the customer sending a label
+  photo; simulated OCR confirms the model and writes `photoVerified` onto the decision trace:
+
+```bash
+curl -X POST http://localhost:8000/sim/photo -H "Content-Type: application/json" \
+  -d '{"correlationId":"WO-10281"}'   # → trace.photoVerified = {model, matchesAsset, source}
+```
+
+> **Simulated-but-labelled:** the photo OCR, the technician ETA behind Share Location, and the PDF
+> report are POC stand-ins (marked as such in the trace); the RCS primitives themselves are real. The
+> panel renders the body, the chips (with icons), the confirmation, and the photo/report in the trace.
+
 ## 3h. Salesforce reads + reschedule: the real org via Apex REST (build step 12)
 
 *`RestSalesforce` calls the Apex class in `apps/salesforce-apex/` with the SAME 3 `SF_*` creds. Blank
@@ -599,11 +621,11 @@ curl -X POST http://localhost:3000/api/reserve -H 'content-type: application/jso
 - **Writes are intentionally open (no auth)** — POC with fake data; a stray mutation is reversed with the
   dashboard "Set" button or a re-`pnpm seed`. Locking them would mean editing `RestInventory` + a Render
   env var, so it was skipped on purpose (user decision, 2026-10-12).
-- **⚠ MCP caveat (`/api/mcp` 404):** `createMcpHandler` defaults its base path to `""`, so it serves at
-  `/mcp`; our route lives at `/api/mcp`, so the handler 404s. One-line fix: pass `{}, { basePath: "/api" }`
-  as the 2nd+3rd args in [`app/api/mcp/route.ts`](apps/ecom/app/api/mcp/route.ts). **Not yet applied** — the
-  MCP server's only consumer is the admin copilot (build-step-14, not built), so the live stock-read path
-  is unaffected. Apply + redeploy before build-step-14 needs it.
+- **MCP path (`/api/mcp`) — FIXED + LIVE (verified 2026-10-13, returns 200):** `createMcpHandler` defaults
+  its base path to `""` (serves `/mcp`); the fix passes `{}, { basePath: "/api" }` as the 2nd+3rd args in
+  [`app/api/mcp/route.ts`](apps/ecom/app/api/mcp/route.ts) so it serves at `/api/mcp`. **Applied and
+  deployed** — `POST https://field-flow-ai.vercel.app/api/mcp` (initialize) → HTTP 200. Ready for the
+  admin copilot (build-step-14).
 - Write-up: [`build-step-13-ecom-inventory.md`](docs/specs/field-service-recovery/build-step-13-ecom-inventory.md) §7.
 
 ## 4. Scenario → where it's proven
@@ -708,7 +730,67 @@ Full detail per step: `docs/specs/field-service-recovery/build-step-*.md`.
 Paste these to drive the next pieces. House rules: **plan first, wait for go**, plain-English
 teaching, mock-first, and I'll always surface what you must set up.
 
-**★ CURRENT FRONT DOOR (2026-10-11, SF reads+reschedule LIVE + MCP copilot plumbing done; next=copilot chat) — paste this to continue in a fresh chat**
+**★ CURRENT FRONT DOOR (2026-10-13, SF record-trigger LIVE + Phase 2 rich RCS DONE; next=commit slices 5-6 + copilot chat) — paste this to continue in a fresh chat**
+```
+Continue FieldFlow AI. Working dir C:\Users\hp\Desktop\RCS-VONAGE-POC.
+
+READ FIRST (in order): CLAUDE.md (HARD rules — plain teaching style; PLAN-FIRST + WAIT for my go on
+every open question; surface MY action items + which boring tasks to hand juniors; end every reply with
+What I achieved / What I need from you / Next steps; spec-driven under docs/specs/field-service-recovery/;
+playbook.md is the command home, update it in the SAME change); playbook.md §8 (this block) + §3g-b (SF
+record trigger) + §3g-c (rich RCS) + §3h (SF Apex REST) + §3i (e-com); the spec
+docs/specs/field-service-recovery/salesforce-trigger-and-rich-rcs.md (the whole SF-trigger + rich-RCS
+build, slices 1-6); memory fieldflow-build-progress.
+
+ONE IDEA: AI proposes -> deterministic policy decides -> human approves risk -> RCS is the customer
+control plane. The decision trace is the hero.
+
+STATE (2026-10-13): backend GREEN — from apps/orchestrator: `uv run pytest -q` -> 108 passed, `uv run
+ruff check .` clean (dev deps: `uv sync --extra dev`). Panel builds (apps/control-panel: `pnpm build`).
+Orchestrator LIVE on Render (fieldflow-ai-w6bm.onrender.com); e-com LIVE on Vercel
+(field-flow-ai.vercel.app, POST /api/mcp initialize = 200). SF org = astreait88-dev-ed.
+
+DONE THIS ERA:
+- SF RECORD TRIGGER -> RCS -> CLOSE is LIVE end-to-end (2026-10-13). Tick ServiceAppointment.At_Risk__c
+  (or Status='Cannot Complete') -> Apex trigger ServiceAppointmentAtRisk -> FieldFlowAtRisk.cls @future
+  callout -> POST /webhooks/sf/at-risk (app/webhooks/routes.py; SF_HOOK_SECRET via X-FieldFlow-Secret
+  header; reuses platform_event_to_at_risk + broker) -> graph -> real RCS carousel on the phone -> tap ->
+  CLOSED. Deployed via apps/salesforce-apex/deploy_sf.py (stdlib Tooling API: Apex create +
+  update-via-MetadataContainer + --fields + --self-check). 3 custom fields: At_Risk__c /
+  At_Risk_Reason__c (10 reasons) / Delay_Minutes__c. FieldFlow Named Credential holds URL+secret.
+  GOTCHAS: fields invisible until Field-Level Security is set; trigger fires only on a false->true
+  TRANSITION (untick->save->tick->save to re-fire). COMMITTED + PUSHED.
+- PHASE 2 RICH RCS (6 slices): the customer card = AI-written reason-aware body (proposer
+  customer_message + deterministic fallback) + action chips (Share Location + Call technician on every
+  offer; Send-a-photo on parts) + a confirmation card at verify (archetype-aware body + Add to Calendar +
+  Call + Service report PDF). /sim/photo runs SIMULATED OCR -> photoVerified on the trace; PDF = a
+  placeholder URL + serviceReport on the trace. All simulated-but-labelled (heavy compute stubbed, the
+  RCS primitive real). Panel RcsCardPreview + DecisionTrace render all of it. Slices 1-3 COMMITTED+PUSHED;
+  SLICES 5-6 BUILT BUT NOT YET COMMITTED.
+
+IMMEDIATE: commit slices 5-6 (human-commits style, no trailer, 4 snapshots backend/panel/tests/docs) +
+push. Then pick NEXT:
+- build-step-14 ADMIN COPILOT CHAT (plan-first): a /copilot chat route running the Groq->Gemini ladder in
+  tool-calling mode over MCP; e-com MCP (/api/mcp) is LIVE + ready; SF Hosted MCP needs my ECA (below).
+  Plumbing already built: app/mcp/ (client+login), GET /copilot/tools, 8 FFCopilot_* Apex tools deployed.
+- OR optional gated-live polish: real inbound-image webhook (needs a device#->case map), real per-case PDF.
+
+MY OPEN ACTION ITEMS:
+1. SF Hosted MCP server + a NEW External Client App (OAuth2+PKCE, scopes mcp_api+refresh_token, callback
+   http://localhost:8000/oauth/callback) -> SF_MCP_* in .env -> `cd apps/orchestrator && uv run python -m
+   app.mcp.login` -> SF_MCP_REFRESH_TOKEN (playbook §3j / hosted-mcp-setup.md). Only blocks SF tools in
+   the copilot; e-com tools work without it.
+2. (optional) the 9c gRPC Pub/Sub live fire — deferred; the HTTP-callout trigger above is what we use.
+
+HOUSE RULES: PLAN-FIRST (restate task, list open questions WITH recommendations, WAIT for my go before
+code). Keep tests green + ruff clean; update playbook.md + the spec Explanation in the SAME change; ask
+before editing context/** beyond approved notes. Do NOT fire a billed Vonage send, a live payment, push,
+or edit apps/orchestrator/.env without my explicit go.
+
+Ask me: commit slices 5-6 now, or start build-step-14 planning, or something else?
+```
+
+**★ EARLIER FRONT DOOR (2026-10-11, SF reads+reschedule LIVE + MCP copilot plumbing done) — superseded**
 ```
 Continue FieldFlow AI. Working dir C:\Users\hp\Desktop\RCS-VONAGE-POC.
 
