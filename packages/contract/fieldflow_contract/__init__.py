@@ -5,7 +5,7 @@ orchestrator exposes. Kept tiny on purpose — grows as nodes land.
 """
 
 from .events import AppointmentAtRisk, EventEnvelope, Reason, make_event
-from .types import Card, CaseView, SlotOption
+from .types import Card, CardAction, CaseView, SlotOption
 
 __all__ = [
     "EventEnvelope",
@@ -13,6 +13,7 @@ __all__ = [
     "Reason",
     "make_event",
     "SlotOption",
+    "CardAction",
     "Card",
     "CaseView",
 ]

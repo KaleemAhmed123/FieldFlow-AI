@@ -11,12 +11,25 @@
           "title": "Title",
           "type": "string"
         },
+        "body": {
+          "default": "",
+          "title": "Body",
+          "type": "string"
+        },
         "options": {
           "default": [],
           "items": {
             "$ref": "#/$defs/SlotOption"
           },
           "title": "Options",
+          "type": "array"
+        },
+        "actions": {
+          "default": [],
+          "items": {
+            "$ref": "#/$defs/CardAction"
+          },
+          "title": "Actions",
           "type": "array"
         },
         "payUrl": {
@@ -30,6 +43,11 @@
           ],
           "default": null,
           "title": "Payurl"
+        },
+        "version": {
+          "default": 0,
+          "title": "Version",
+          "type": "integer"
         }
       },
       "required": [
@@ -37,6 +55,30 @@
         "title"
       ],
       "title": "Card",
+      "type": "object"
+    },
+    "CardAction": {
+      "description": "A suggested action chip on a card (slice 2). `type` maps to a real RCS suggested action:\nshare_location (customer sends GPS), dial (call a number), calendar (add the appointment),\nview (open a URL). `value` carries the phone/url/label the action needs; blank where unused.",
+      "properties": {
+        "type": {
+          "title": "Type",
+          "type": "string"
+        },
+        "label": {
+          "title": "Label",
+          "type": "string"
+        },
+        "value": {
+          "default": "",
+          "title": "Value",
+          "type": "string"
+        }
+      },
+      "required": [
+        "type",
+        "label"
+      ],
+      "title": "CardAction",
       "type": "object"
     },
     "SlotOption": {
