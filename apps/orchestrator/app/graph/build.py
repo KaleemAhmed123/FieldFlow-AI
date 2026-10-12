@@ -23,7 +23,7 @@ from __future__ import annotations
 
 from typing import Any, TypedDict
 
-from fieldflow_contract import Card, SlotOption
+from fieldflow_contract import Card, CardAction, SlotOption
 from langgraph.graph import END, StateGraph
 from langgraph.types import Command, interrupt
 
@@ -44,6 +44,25 @@ _CONTEXT_READS = [
     "salesforce.get_appointment", "salesforce.get_customer",
     "salesforce.get_asset", "salesforce.get_technician",
 ]
+
+
+# Demo support line used for "Call support" when a technician's own number isn't on the record.
+SUPPORT_PHONE = "+91-80000-00000"
+
+
+def _offer_actions(context: dict) -> list[CardAction]:
+    """Suggested action chips on the reschedule offer (slice 2). These are the 'RCS is a control
+    plane' moments: the customer shares GPS so we can confirm the tech's ETA, or calls in one tap.
+    Scenario-agnostic — every archetype's offer gets them; per-archetype extras come in slice 3."""
+    tech = context.get("technician") or {}
+    phone = tech.get("phone")
+    actions = [CardAction(type="share_location", label="Share my location")]
+    if phone:
+        actions.append(CardAction(type="dial", label=f"Call {tech.get('name', 'technician')}",
+                                  value=phone))
+    else:
+        actions.append(CardAction(type="dial", label="Call support", value=SUPPORT_PHONE))
+    return actions
 
 
 def _add(used: list[str], *names: str) -> list[str]:
@@ -87,6 +106,7 @@ class GraphState(TypedDict, total=False):
     archetype: str
     llm_confidence: float
     explanation: str
+    customerMessage: str
     llmProvider: str
     degraded: bool
     rateLimitNote: str | None
@@ -198,7 +218,8 @@ def build_graph(
                  provider=proposal.provider, degraded=proposal.degraded)
         return {"candidates": candidates, "context": context, "toolsUsed": tools_used,
                 "archetype": proposal.archetype, "llm_confidence": proposal.llm_confidence,
-                "explanation": proposal.explanation, "llmProvider": proposal.provider,
+                "explanation": proposal.explanation, "customerMessage": proposal.customer_message,
+                "llmProvider": proposal.provider,
                 "degraded": proposal.degraded, "rateLimitNote": proposal.rate_limit_note}
 
     def policy_validate(state: GraphState) -> GraphState:
@@ -252,8 +273,12 @@ def build_graph(
             for c in state["options"]
         ]
         version = state.get("version", 0) + 1
-        card = Card(kind="carousel", title="Your appointment needs a small adjustment",
-                    options=opts, version=version)  # version → RCS postback (stale guard, NFR-6)
+        # title = a short header; body = the AI-written, reason-aware message (slice 1). The LLM
+        # wrote it (generate_options); the deterministic floor supplies it offline.
+        card = Card(kind="carousel", title="Let's get your appointment back on track",
+                    body=state.get("customerMessage", ""),
+                    options=opts, actions=_offer_actions(state["context"]),
+                    version=version)  # version → RCS postback (stale guard, NFR-6)
         sent = vonage.send_card(state["event"]["correlationId"], card)
         log.info("graph.offer_to_customer", options=len(opts), version=version)
         return {"card": card.model_dump(), "sent": sent, "version": version,
