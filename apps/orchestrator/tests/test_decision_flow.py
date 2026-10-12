@@ -123,3 +123,8 @@ async def test_happy_path_executes_to_closed(sessionmaker, vonage, graph):
 
     case = await _case(sessionmaker, "WO-OK")
     assert case.status == "CLOSED"
+    # slice 3: the journey ends on a confirmation card with Add-to-Calendar + Call actions.
+    confirmation = case.sent_card["card"]
+    assert confirmation["kind"] == "confirmation" and confirmation["body"]
+    action_types = {a["type"] for a in confirmation["actions"]}
+    assert "calendar" in action_types and "dial" in action_types
