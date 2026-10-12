@@ -119,12 +119,32 @@ Add metadata only when a scenario needs it (no speculative objects/fields).
 - [ ] `deploy_sf.py --fields` creates the 3 ServiceAppointment fields; create the `FieldFlow` Named Credential.
 - [x] `ServiceAppointmentAtRisk.trigger` + `FieldFlowAtRisk.cls` + test written + **deployed to the org
   2026-10-13** (all 3 compiled via Tooling API → the 3 custom fields confirmed present).
-- [ ] Push orchestrator so Render serves `/webhooks/sf/at-risk`; create `FieldFlow` Named Credential.
-- [ ] Live fire: tick the field on a seeded appointment → case appears.
-- [ ] `Card` contract extension + LLM-body surfacing + `card_to_rcs` mapping + tests.
-- [ ] Per-archetype message sets in the graph.
-- [ ] Panel rendering of new card kinds.
-- [ ] Update `playbook.md` (new §3g trigger + rich-message how-to) in the same change.
+- [x] Push orchestrator so Render serves `/webhooks/sf/at-risk` (live 2026-10-13); `FieldFlow` Named
+  Credential created with the `X-FieldFlow-Secret` header; `SF_HOOK_SECRET` set on Render (secret path
+  live, not blank).
+- [x] **Live fire 2026-10-13** — ticked `At_Risk__c` in the org → trigger → `@future` callout →
+  `/webhooks/sf/at-risk` → graph → **real RCS carousel on the phone** → tapped a slot → case **CLOSED**.
+  Phase 1 proven end-to-end against the real org. (Field visibility needed Field-Level Security, not
+  just the page layout; the trigger fires only on a false→true transition.)
+**Phase 2 — rich RCS messages (sliced):**
+- [x] **Slice 1 — AI customer message (the RCS body).** `Card.body` added (contract + schema + TS
+  regen); proposer now writes a warm, reason-aware `customer_message` (LLM prompt + schema +
+  `customer_message_for` deterministic floor + parse fallback); threaded graph
+  `generate_options → customerMessage → offer_to_customer` onto `card.body`; real `send_card` leads
+  with an RCS text (the body) then the carousel; panel `RcsCardPreview` renders the body under a new
+  title. Backend 106 tests green (+3), ruff clean; panel tsc+vite build green. (2026-10-13)
+- [x] **Slice 2 — suggested action chips on the offer.** `CardAction` model (type/label/value) +
+  `Card.actions` (contract + schema + TS regen); `_offer_actions(context)` attaches **Share Location**
+  + **Dial technician** (tech phone, else Call support) to every archetype's offer carousel;
+  `actions_to_suggestions()` maps them to real RCS suggestion chips on the leading text message;
+  FakeSalesforce technician got a `phone`; panel renders the chips with icons. Backend 107 tests
+  green (+1), ruff clean; panel build green. (2026-10-13) NOTE: **Calendar + View belong on a
+  *post-choice* confirmation card** (putting them on a pre-choice offer is wrong and would break the
+  e2e card asserts) → moved to slice 3 with the confirmation message.
+- [ ] Slice 3 — per-archetype message sets (delay / parts / complex) + a **confirmation card** at
+  verify carrying **Add to Calendar** + **Dial** + **View** (completes the action coverage).
+- [ ] Slice 4 — panel rendering of the new card kinds + actions.
+- [ ] Update `playbook.md` rich-message how-to once the slices settle.
 
 ## 6. Updates
 
