@@ -17,10 +17,11 @@ import hashlib
 import hmac
 import json
 
-from fastapi import APIRouter, Request, Response
+from fastapi import APIRouter, HTTPException, Request, Response
 
 from app.config import settings
 from app.db.session import get_sessionmaker
+from app.events import platform_event_to_at_risk
 from app.logging import get_logger
 from app.services import case_service
 
@@ -106,3 +107,31 @@ async def status(request: Request) -> Response:
             status=data.get("status"), to=(data.get("to") or {}).get("number"),
         )
     return Response(status_code=200)
+
+
+@router.post("/sf/at-risk")
+async def sf_at_risk(request: Request) -> dict:
+    """The real Salesforce trigger (build step 9c, HTTP-callout path). The ServiceAppointmentAtRisk
+    Apex trigger POSTs the at-risk ServiceAppointment here; we map the SF payload to our contract
+    event and publish it onto the SAME exchange /sim/appointment-at-risk uses — the consumer, graph,
+    policy and RCS downstream never change, only *where* the event came from.
+
+    Guarded by a shared secret in the X-FieldFlow-Secret header (blank secret → skip, offline/dev).
+    A malformed payload (missing ids) fails loud with 400 rather than mis-routing (9b golden rule).
+    """
+    secret = settings.sf_hook_secret
+    if secret and not hmac.compare_digest(request.headers.get("x-fieldflow-secret", ""), secret):
+        log.info("webhook.sf_at_risk.unauthorized")
+        raise HTTPException(status_code=401, detail="bad secret")
+    try:
+        event = platform_event_to_at_risk(json.loads(await request.body() or b"{}"))
+    except (ValueError, json.JSONDecodeError) as exc:
+        log.info("webhook.sf_at_risk.bad_payload", error=str(exc))
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    broker = request.app.state.broker
+    if broker is None:
+        raise HTTPException(status_code=503, detail="RabbitMQ unavailable")
+    await broker.publish(event.event, event.model_dump(mode="json"))
+    log.info("webhook.sf_at_risk.published",
+             correlationId=event.correlationId, eventId=event.eventId)
+    return {"published": True, "eventId": event.eventId, "correlationId": event.correlationId}

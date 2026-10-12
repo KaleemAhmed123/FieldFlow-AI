@@ -92,6 +92,11 @@ class Settings(BaseSettings):
     # REST reads below uses the SAME 3 creds, and we must not start the unfinished trigger task just
     # because reads went live. Set true only when SalesforcePubSubSource.run is actually filled.
     sf_pubsub_enabled: bool = False
+    # The HTTP-callout trigger (the live path we actually use instead of the gRPC stub above): the
+    # ServiceAppointmentAtRisk Apex trigger POSTs to /webhooks/sf/at-risk with this shared secret in
+    # the X-FieldFlow-Secret header. Blank → the secret check is skipped (offline/dev convenience);
+    # set it on Render + in the Salesforce Named Credential before the org can reach the endpoint.
+    sf_hook_secret: str = ""
 
     # Salesforce Apex REST surface (build step 12 — the deterministic read + reschedule path against
     # apps/salesforce-apex/). Reuses the SAME client-credentials creds as the trigger; sf_rest_armed
