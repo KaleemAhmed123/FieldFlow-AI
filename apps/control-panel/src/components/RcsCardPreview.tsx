@@ -1,11 +1,28 @@
-import { CreditCard, MessageSquare, Signal, Wifi } from "lucide-react";
+import {
+  CalendarPlus,
+  CreditCard,
+  ExternalLink,
+  MapPin,
+  MessageSquare,
+  Phone,
+  Signal,
+  Wifi,
+} from "lucide-react";
 
 import { Button } from "@/components/ui/button";
 import type { Card } from "@/lib/api";
 
+const ACTION_ICON: Record<string, typeof MapPin> = {
+  share_location: MapPin,
+  dial: Phone,
+  calendar: CalendarPlus,
+  view: ExternalLink,
+};
+
 // A phone mock of what the customer sees over RCS — the "customer control plane". The carousel's
 // slot buttons and the "Approve & Pay" button are live: they drive the same /sim resume the real
-// webhook would. `busy` disables them while a tap is in flight.
+// webhook would. The suggested-action chips (Share Location / Dial / …) mirror the real RCS
+// suggestions. `busy` disables the live controls while a tap is in flight.
 export function RcsCardPreview({
   card,
   onPickSlot,
@@ -46,7 +63,10 @@ export function RcsCardPreview({
             </div>
           ) : (
             <div className="animate-fade-in space-y-2 rounded-lg rounded-tl-sm border border-border bg-surface p-2.5">
-              <p className="text-[11px] font-medium leading-snug text-fg">{card.title}</p>
+              <p className="text-[11px] font-semibold leading-snug text-fg">{card.title}</p>
+              {card.body ? (
+                <p className="text-[10.5px] leading-relaxed text-fg/75">{card.body}</p>
+              ) : null}
 
               {card.kind === "payment" ? (
                 <a href={card.payUrl ?? "#"} target="_blank" rel="noreferrer" className="block">
@@ -73,6 +93,23 @@ export function RcsCardPreview({
                   {(card.options ?? []).length === 0 && (
                     <p className="font-mono text-[9px] text-faint">no options on this card</p>
                   )}
+                </div>
+              )}
+
+              {(card.actions ?? []).length > 0 && (
+                <div className="flex flex-wrap gap-1 pt-0.5">
+                  {(card.actions ?? []).map((a, i) => {
+                    const Icon = ACTION_ICON[a.type] ?? MessageSquare;
+                    return (
+                      <span
+                        key={`${a.type}-${i}`}
+                        className="inline-flex items-center gap-1 rounded-full border border-accent/30 bg-accent/5 px-2 py-0.5 text-[9px] font-medium text-accent"
+                      >
+                        <Icon className="h-2.5 w-2.5" />
+                        {a.label}
+                      </span>
+                    );
+                  })}
                 </div>
               )}
             </div>
