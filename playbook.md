@@ -429,6 +429,13 @@ curl -X POST http://localhost:8000/sim/dlq/replay   # {"replayed": N}
 uv run pytest -q tests/test_failures.py
 ```
 
+> **Failed events are now VISIBLE (not just a silent DLQ entry).** If the graph crashes mid-pipeline
+> (e.g. a live Vonage RCS send 422s), `handle_event` writes a **`FAILED` case** whose `decisionTrace`
+> carries `{error, errorType}`, then **re-raises** so the message still dead-letters for replay. So a
+> broken live fire shows up at `GET /cases/{id}` and in the panel with the exact error — no need to
+> read the server logs. A successful replay upserts the same case to its real status. This is why a
+> `part_missing` live fire that used to vanish now lands as `FAILED` with the reason attached.
+
 ## 3g. Salesforce trigger: the flow started by a real SF event (build step 9c)
 
 *Today `/sim/appointment-at-risk` fires the case. In production a real Salesforce **Platform Event**

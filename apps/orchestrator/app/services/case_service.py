@@ -84,6 +84,23 @@ async def _persist(session: AsyncSession, cid: str, result: dict) -> str:
     return status
 
 
+async def _persist_failed(session: AsyncSession, cid: str, exc: Exception) -> None:
+    """Record a FAILED case when the graph crashes, so the failure is VISIBLE in /cases + the panel
+    instead of only a silent DLQ entry. The caller still re-raises → the message dead-letters for
+    replay; a successful replay upserts this same case to its real status. The error (status + which
+    external call blew up) lands in the decision trace so you don't need the logs to diagnose.
+    """
+    case = (
+        await session.execute(select(Case).where(Case.correlation_id == cid))
+    ).scalar_one_or_none()
+    if case is None:
+        case = Case(correlation_id=cid)
+        session.add(case)
+    case.status = "FAILED"
+    case.decision_trace = {"error": str(exc), "errorType": type(exc).__name__}
+    session.add(AuditLog(correlation_id=cid, kind="failed", payload={"error": str(exc)}))
+
+
 # A delivery status that means "the RCS card did not reach the customer" → trigger the SMS fallback.
 _FAILED_DELIVERY = {"failed", "rejected", "undelivered"}
 
@@ -139,7 +156,14 @@ async def handle_event(session: AsyncSession, event: AppointmentAtRisk, *, graph
     session.add(IdempotencyKey(key=event.eventId))
 
     config = {"configurable": {"thread_id": event.correlationId}}
-    result = await graph.ainvoke({"event": event.model_dump(mode="json")}, config)
+    try:
+        result = await graph.ainvoke({"event": event.model_dump(mode="json")}, config)
+    except Exception as exc:  # noqa: BLE001 — record a FAILED case for visibility, then re-raise
+        await session.rollback()  # drop the uncommitted idempotency key so a replay can reprocess
+        await _persist_failed(session, event.correlationId, exc)
+        await session.commit()
+        log.error("event.failed", error=str(exc), errorType=type(exc).__name__)
+        raise
 
     status = await _persist(session, event.correlationId, result)
     await session.commit()

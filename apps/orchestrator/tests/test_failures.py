@@ -72,17 +72,19 @@ async def test_failed_status_unknown_message_records_but_no_sms(sessionmaker):
 
 
 # --- 7b: Salesforce down → handle_event raises (this is what dead-letters the message) -----------
-async def test_salesforce_down_makes_processing_raise(sessionmaker, salesforce, graph):
+async def test_salesforce_down_persists_failed_and_raises(sessionmaker, salesforce, graph):
     salesforce.down = True
     with pytest.raises(RuntimeError, match="salesforce unavailable"):
         async with sessionmaker() as s:
             await case_service.handle_event(s, make_event(work_order_id="WO-7B"), graph=graph)
-    # No case row was persisted — the failure parks the message in the DLQ, it isn't half-processed.
+    # The failure is now VISIBLE as a FAILED case AND still re-raised → the message still
+    # dead-letters for replay (the raise parks it). A replay upserts this case to its real status.
     async with sessionmaker() as s:
-        n = (await s.execute(
-            select(func.count()).select_from(Case).where(Case.correlation_id == "WO-7B")
+        case = (await s.execute(
+            select(Case).where(Case.correlation_id == "WO-7B")
         )).scalar_one()
-    assert n == 0
+    assert case.status == "FAILED"
+    assert "salesforce unavailable" in (case.decision_trace or {}).get("error", "")
 
 
 # --- 7b: the toggle flips reads off and back on --------------------------------------------------
