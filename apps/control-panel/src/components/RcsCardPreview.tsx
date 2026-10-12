@@ -90,9 +90,6 @@ export function RcsCardPreview({
                       </div>
                     </button>
                   ))}
-                  {(card.options ?? []).length === 0 && (
-                    <p className="font-mono text-[9px] text-faint">no options on this card</p>
-                  )}
                 </div>
               )}
 
