@@ -14,7 +14,6 @@ import time
 import uuid
 from pathlib import Path
 from typing import Protocol
-from urllib.parse import quote
 
 from fieldflow_contract import Card
 
@@ -24,14 +23,16 @@ log = get_logger("vonage")
 
 MAX_SUGGESTIONS = 4  # Vonage RCS allows at most 4 suggestions per card.
 
-# RCS requires an image on every carousel card (a text-only card is a 422). Minimalist theme: dark
-# slate background, light text, the slot label rendered on it. Swap for a branded/hosted asset
-# later. ponytail: placeholder image service, fine for the POC; one line to change.
-CARD_MEDIA_BASE = "https://placehold.co/800x400/111827/f9fafb/png"
+# RCS requires an image on every carousel card (a text-only card is a 422). This MUST be a static,
+# directly-addressable image URL (no query string): Google's RCS backend (RBM) fetches/validates the
+# media on its own side and does NOT reliably render a dynamic placeholder (placehold.co?text=...)
+# — that's why the carousel image was blank. We serve a static branded PNG from the deployed e-com
+# (apps/ecom/public/card.png). ponytail: one shared image; per-model images would be A2 (later).
+CARD_MEDIA_URL = "https://field-flow-ai.vercel.app/card.png"
 
 
 def _card_media(label: str) -> str:
-    return f"{CARD_MEDIA_BASE}?text={quote(label)}"
+    return CARD_MEDIA_URL
 
 
 class VonageClient(Protocol):

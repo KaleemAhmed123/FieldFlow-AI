@@ -385,7 +385,7 @@ actually gets a card delivered and the tap back — each was a real blocker we h
 | `422 rcs.card_width required` | carousel needs card width | top-level `rcs.card_width` (done) |
 | `202` but **no card on phone** | number not an allow-listed **test device** | add the number as a test device on the agent; `to` is **digits only, no `+`** |
 | card arrives, **tap never resumes** | Inbound URL not set on the **application** | set Inbound+Status URL on the app (`VONAGE_APPLICATION_ID`), not the agent builder |
-| image area blank | Google RBM fetches/validates media itself | cosmetic — swap `CARD_MEDIA_BASE` for a hosted branded image; flow is unaffected |
+| image area blank | Google RBM fetches/validates media itself and won't render a **dynamic** URL (placehold.co?text=…) | **FIXED** — `_card_media` now returns a **static** image `https://field-flow-ai.vercel.app/card.png` (file `apps/ecom/public/card.png`); static, no query string. Needs an e-com + orchestrator redeploy. Per-model images = A2 (later) |
 | server crashes on boot (Windows) | psycopg3 + ProactorEventLoop | run with `uvicorn --reload` (selector loop only set under the reload subprocess) |
 
 Golden rule we re-learned: **make the failure loud (log the response body + traceback) and read it
@@ -471,11 +471,22 @@ uv run pytest -q tests/test_event_source.py
 #       -> paste apps/salesforce-apex/FieldFlowRest.cls -> File > Save.  (NB: do step 1 first.)
 #    B) sf CLI: sf project deploy start --source-dir apps/salesforce-apex --target-org <alias>
 #    Then grant the integration user API Enabled + Apex-class access (apps/salesforce-apex/README.md §3).
-# 3) SEED real demo data (reuses the .env SF_* creds; idempotent; prints the AppointmentNumbers):
-uv run --with simple-salesforce python apps/salesforce-apex/seed_demo_data.py
+# 3) SEED rich demo data (reuses the .env SF_* creds; idempotent; catalog-driven). Creates 28 cases
+#    = all 14 models x in/out warranty, 10 customers, 6 technicians, and PRINTS A FIRE MENU
+#    (AppointmentNumber -> model -> warranty -> suggested reason). --clean removes the demo chain.
+uv run --with simple-salesforce python apps/salesforce-apex/seed_demo_data.py          # SA-0003..SA-0030
+uv run --with simple-salesforce python apps/salesforce-apex/seed_demo_data.py --clean  # reset
 # 4) ARM the reads: put the 3 SF_* creds (+ SF_TIMEZONE) in apps/orchestrator/.env, restart the app.
 #    Smoke-test a read with the curl in apps/salesforce-apex/README.md §5.
 ```
+
+> **Rich demo cases (after the seed).** 28 appointments span every appliance (AC, fridge, washer,
+> microwave, water-purifier, …). Fire any from the menu — the live LLM proposes **model-specific**
+> parts grounded in that model's manual (RAG) with live stock from the e-com: fridge → `FANE-410`/
+> `COMP-410`, AC → `PCB-492`, microwave → `HVT-28`. Reasons cover all archetypes (delay / parts /
+> complex) + the paid-repair path. RAG (live pgvector, 209 chunks) + e-com (86 parts) already cover
+> all 14 models, so everything connects. (Earlier live fires drain some e-com stock — re-run the
+> e-com `pnpm seed` or use the dashboard **Set** to reset before a demo.)
 
 - Live calls are **untested against a real org** until you deploy + seed. The seed script fails loud
   with Salesforce's exact error (usually a missing field/permission) — paste it back and we adjust.

@@ -1,31 +1,29 @@
 #!/usr/bin/env python
-"""Seed a minimal Field Service demo chain into your REAL Salesforce org.
+"""Seed a RICH, realistic Field Service demo into your REAL Salesforce org.
 
-Why: so RestSalesforce's live reads (build step 12) return real records, and so you have an
-appointment to fire the recovery flow against. It creates the smallest chain the Apex class
-(FieldFlowRest.cls) reads: Account -> Contact (customer), Asset (in- and out-of-warranty),
-ServiceResource (technician), WorkOrder, ServiceAppointment, AssignedResource.
+Catalog-driven: for EVERY model in app/data/catalog.json it creates an in-warranty and an
+out-of-warranty chain (Account + Contact customer, Asset, WorkOrder, ServiceAppointment, assigned
+technician), so the recovery flow can fire real-world cases across all 14 appliance models. The RAG
+corpus (14 service manuals) and the e-com (86 parts) already cover these same models — so a fired
+case connects end to end: real asset -> real manual (RAG) -> real parts (e-com) -> rich AI options.
 
 How it authenticates: the SAME OAuth client-credentials creds the orchestrator uses
-(SF_LOGIN_URL / SF_CLIENT_ID / SF_CLIENT_SECRET) — read from apps/orchestrator/.env, or the
+(SF_LOGIN_URL / SF_CLIENT_ID / SF_CLIENT_SECRET) — read from apps/orchestrator/.env or the
 environment (env wins). No new creds.
 
 Run (from the repo root):
     uv run --with simple-salesforce python apps/salesforce-apex/seed_demo_data.py
+    uv run --with simple-salesforce python apps/salesforce-apex/seed_demo_data.py --clean
 
-Safe to re-run: each record is matched on a filterable field (the demo Account name, the WorkOrder
-subject, the warranty checkbox, the appointment's parent), so a second run updates instead of
-duplicating. Fail-loud: the required spine raises on error (so you see exactly what your org
-rejected — usually a missing field or permission). The optional bits (technician link) only warn,
-because the Apex reads already tolerate them being absent.
+Idempotent: every record matches on a filterable field (Account name, WO subject, the warranty
+checkbox, the appointment's parent), so a re-run UPDATES instead of duplicating. Fail-loud on the
+required spine. `--clean` removes the FieldFlow demo chain (Appointments/WOs/Assets/Contacts/
+Accounts tagged for the demo) so you can reset.
 
-Assumptions (match the .cls A1-A4 — adjust here or tell me if your org differs):
+Assumptions (match FieldFlowRest.cls A1-A4 — adjust here or tell me if your org differs):
   - A1  warranty = the custom checkbox Asset.Warranty_Active__c (create it before running).
   - A2  ServiceAppointment.ParentRecordId -> WorkOrder (carrying ContactId + AssetId).
-  - FS  Field Service objects (WorkOrder/ServiceAppointment/ServiceResource/AssignedResource) exist
-        and the integration user can create them.
-
-# ponytail: one-off seed, not a migration tool — no schema discovery, no bulk API; a dozen records.
+  - FS  Field Service objects exist and the integration user can create them.
 """
 
 from __future__ import annotations
@@ -37,12 +35,45 @@ import urllib.parse
 import urllib.request
 from pathlib import Path
 
-ENV_PATH = Path(__file__).resolve().parents[1] / "orchestrator" / ".env"
-MODEL = "Frostline Inverter Split AC XYZ-492"  # matches app/data/catalog.json + FakeSalesforce
+REPO = Path(__file__).resolve().parents[1]
+ENV_PATH = REPO / "orchestrator" / ".env"
+CATALOG = REPO / "orchestrator" / "app" / "data" / "catalog.json"
+TAG = "FFDemo"  # stamped on every demo record so --clean can find them
+
+# A pool of distinct customers (reused across the 28 appointments). First is Kaleem (the live-fire one).
+CUSTOMERS = [
+    ("Kaleem", "Ahmed", "+91-90000-00001"),
+    ("Priya", "Nair", "+91-90000-00002"),
+    ("Imran", "Khan", "+91-90000-00003"),
+    ("Sneha", "Reddy", "+91-90000-00004"),
+    ("Vikram", "Singh", "+91-90000-00005"),
+    ("Meera", "Iyer", "+91-90000-00006"),
+    ("Arjun", "Mehta", "+91-90000-00007"),
+    ("Fatima", "Sheikh", "+91-90000-00008"),
+    ("Rohan", "Das", "+91-90000-00009"),
+    ("Divya", "Pillai", "+91-90000-00010"),
+]
+# A pool of technicians (one active ServiceResource per free user). Names only; the recovery flow's
+# richness comes from the asset model + reason, and policy doesn't hard-gate on technician skill.
+TECHNICIANS = ["Rahul Kumar", "Anjali Verma", "Suresh Patel", "Kavya Rao", "Deepak Joshi", "Neha Gupta"]
+
+# Suggested reason per case for the fire menu, chosen to show every archetype + the commerce path.
+# (The reason is fired at demo time via /sim, not stored in Salesforce.)
+REASONS_IN = ["part_missing", "technician_delay", "part_missing", "traffic_weather",
+              "part_missing", "customer_access_issue", "part_missing"]          # in-warranty -> free part / delay
+REASONS_OUT = ["additional_fault_found", "asset_complex", "part_missing", "safety_risk",
+               "wrong_part_shipped", "warranty_dispute", "technician_no_show"]  # out-of-warranty -> paid / human
+_EXPECT = {
+    "part_missing": "part reschedule (free if in-warranty, PAID quote if not) + inventory race",
+    "additional_fault_found": "newly-found fault -> chargeable -> Approve & Pay",
+    "technician_delay": "simple reschedule, no part", "traffic_weather": "simple reschedule, no part",
+    "customer_access_issue": "simple reschedule, no part", "technician_no_show": "simple reschedule",
+    "wrong_part_shipped": "re-order the right part", "asset_complex": "low confidence -> HUMAN approval",
+    "safety_risk": "forced HUMAN approval (risk-tiered)", "warranty_dispute": "forced HUMAN approval",
+}
 
 
 def load_creds() -> tuple[str, str, str]:
-    """SF_* from the environment first, then apps/orchestrator/.env. Fail loud if any is missing."""
     import os
 
     vals = {k: os.environ.get(k, "") for k in ("SF_LOGIN_URL", "SF_CLIENT_ID", "SF_CLIENT_SECRET")}
@@ -62,7 +93,6 @@ def load_creds() -> tuple[str, str, str]:
 
 
 def get_token(login_url: str, client_id: str, client_secret: str) -> tuple[str, str]:
-    """OAuth client-credentials -> (access_token, instance_url). Same flow as RestSalesforce."""
     data = urllib.parse.urlencode(
         {"grant_type": "client_credentials", "client_id": client_id, "client_secret": client_secret}
     ).encode()
@@ -70,7 +100,7 @@ def get_token(login_url: str, client_id: str, client_secret: str) -> tuple[str, 
     try:
         with urllib.request.urlopen(req, timeout=30) as resp:  # noqa: S310 (our own org URL)
             body = json.load(resp)
-    except urllib.error.HTTPError as e:  # token errors are the usual first wall — show the body
+    except urllib.error.HTTPError as e:
         sys.exit(f"Token request failed ({e.code}): {e.read().decode(errors='replace')}")
     return body["access_token"], body["instance_url"].rstrip("/")
 
@@ -90,82 +120,132 @@ def main() -> None:
     def esc(v: str) -> str:
         return str(v).replace("\\", "\\\\").replace("'", "\\'")
 
-    def upsert(obj: str, where: str, fields: dict) -> str:
-        """Create or update one record. `where` is a SOQL filter on FILTERABLE fields (Name,
-        Subject, a checkbox, a lookup) to find an existing one — NOT a long-text field like
-        Description, which Salesforce refuses to filter on. Makes re-runs idempotent."""
+    if "--clean" in sys.argv:
+        clean(sf, esc)
+        return
+
+    def upsert(obj: str, where: str, fields: dict, create_only: tuple[str, ...] = ()) -> str:
+        """Create or update one record. `where` filters on FILTERABLE fields to find an existing one.
+        `create_only` drops fields Salesforce refuses to UPDATE (e.g. ServiceAppointment.ParentRecordId)."""
         found = sf.query(f"SELECT Id FROM {obj} WHERE {where} LIMIT 1")
         if found["totalSize"]:
             rid = found["records"][0]["Id"]
-            getattr(sf, obj).update(rid, fields)
-            print(f"  updated {obj:<20} {rid}")
+            upd = {k: v for k, v in fields.items() if k not in create_only}
+            if upd:
+                getattr(sf, obj).update(rid, upd)
             return rid
-        rid = getattr(sf, obj).create(fields)["id"]
-        print(f"  created {obj:<20} {rid}")
-        return rid
+        return getattr(sf, obj).create(fields)["id"]
 
-    # --- required spine (raises on error — this is the data the reads need) -------------------
-    print("Seeding...")
-    account_id = upsert("Account", "Name = 'FieldFlow Demo Customer'",
-                        {"Name": "FieldFlow Demo Customer"})
-    contact_id = upsert("Contact", f"LastName = 'Ahmed' AND AccountId = '{account_id}'",
-                        {"LastName": "Ahmed", "FirstName": "Kaleem", "AccountId": account_id,
-                         "MobilePhone": "+91-90000-00000"})
-    asset_where = f"Name = '{esc(MODEL)}' AND AccountId = '{account_id}' AND Warranty_Active__c = "
-    asset_fields = {"Name": MODEL, "AccountId": account_id, "ContactId": contact_id}
-    asset_id = upsert("Asset", asset_where + "true", {**asset_fields, "Warranty_Active__c": True})
-    asset_oow_id = upsert("Asset", asset_where + "false",
-                          {**asset_fields, "Warranty_Active__c": False})
+    models = json.loads(CATALOG.read_text(encoding="utf-8"))["models"]
+    print(f"Seeding {len(models)} models x 2 (in/out warranty) = {len(models) * 2} appointments...\n")
 
-    appointments: list[tuple[str, str]] = []
-    sa_ids: list[str] = []
-    cases = (("in-warranty", asset_id, "in-warranty (free part)"),
-             ("out-of-warranty", asset_oow_id, "out-of-warranty (paid part)"))
-    for _key, this_asset, label in cases:
-        subject = f"FieldFlow demo WO ({label})"
-        wo_id = upsert("WorkOrder", f"Subject = '{esc(subject)}'",
-                       {"Subject": subject, "ContactId": contact_id,
-                        "AssetId": this_asset, "AccountId": account_id})
-        sa_id = upsert("ServiceAppointment", f"ParentRecordId = '{wo_id}'",
-                       {"ParentRecordId": wo_id, "Status": "Scheduled"})
-        number = sf.ServiceAppointment.get(sa_id)["AppointmentNumber"]
-        appointments.append((number, label))
-        sa_ids.append(sa_id)
+    # --- customers (Account + Contact) --------------------------------------------------------
+    customer_ids: list[tuple[str, str, str]] = []  # (account_id, contact_id, full_name)
+    for first, last, phone in CUSTOMERS:
+        acct_name = f"{TAG}: {first} {last}"
+        acct = upsert("Account", f"Name = '{esc(acct_name)}'", {"Name": acct_name})
+        con = upsert("Contact", f"LastName = '{esc(last)}' AND AccountId = '{acct}'",
+                     {"LastName": last, "FirstName": first, "AccountId": acct, "MobilePhone": phone})
+        customer_ids.append((acct, con, f"{first} {last}"))
+    print(f"  customers: {len(customer_ids)}")
 
-    # --- optional technician (warn-only: the Apex getTechnician tolerates it being absent) ----
-    # A user can own only ONE active ServiceResource, so reuse an existing one if the org already
-    # has it (our demo org's integration user is already a resource); only create when none exists
-    # and we can find a user who isn't already a resource.
-    try:
-        existing = sf.query("SELECT Id, Name FROM ServiceResource "
-                            "WHERE IsActive = true ORDER BY CreatedDate LIMIT 1")
-        if existing["totalSize"]:
-            row = existing["records"][0]
-            resource_id = row["Id"]
-            print(f"  reusing ServiceResource    {resource_id}  ({row['Name']})")
-        else:
-            free = sf.query("SELECT Id FROM User WHERE IsActive = true AND Id NOT IN "
-                            "(SELECT RelatedRecordId FROM ServiceResource) "
-                            "ORDER BY CreatedDate LIMIT 1")
-            resource_id = sf.ServiceResource.create(
-                {"Name": "Rahul Kumar", "IsActive": True, "ResourceType": "T",
-                 "RelatedRecordId": free["records"][0]["Id"]})["id"]
-            print(f"  created ServiceResource    {resource_id}")
-        for sa_id in sa_ids:
-            exists = sf.query(f"SELECT Id FROM AssignedResource WHERE ServiceAppointmentId = "
-                              f"'{sa_id}' AND ServiceResourceId = '{resource_id}' LIMIT 1")
+    # --- technicians (one ServiceResource per free user; reuse by name on re-run) --------------
+    tech_ids = ensure_technicians(sf, esc)
+    print(f"  technicians: {len(tech_ids)}")
+
+    # --- the 28 chains: Asset -> WorkOrder -> ServiceAppointment -> AssignedResource -----------
+    rows: list[tuple[str, str, str, str]] = []  # (number, model, warranty, suggested_reason)
+    case = 0
+    for mi, m in enumerate(models):
+        model_name, model_id = m["name"], m["modelId"]
+        for wi, (warranty_active, tag) in enumerate(((True, "in-warranty"), (False, "out-of-warranty"))):
+            acct_id, con_id, cust = customer_ids[case % len(customer_ids)]
+            tech_id = tech_ids[case % len(tech_ids)]
+            asset_name = f"{model_name}"
+            asset_where = (f"Name = '{esc(asset_name)}' AND AccountId = '{acct_id}' "
+                           f"AND Warranty_Active__c = {'true' if warranty_active else 'false'}")
+            asset_id = upsert("Asset", asset_where,
+                              {"Name": asset_name, "AccountId": acct_id, "ContactId": con_id,
+                               "Warranty_Active__c": warranty_active})
+            subject = f"{TAG} {model_id} {tag} ({cust})"
+            wo_id = upsert("WorkOrder", f"Subject = '{esc(subject)}'",
+                           {"Subject": subject, "ContactId": con_id, "AssetId": asset_id,
+                            "AccountId": acct_id})
+            sa_id = upsert("ServiceAppointment", f"ParentRecordId = '{wo_id}'",
+                           {"ParentRecordId": wo_id, "Status": "Scheduled"},
+                           create_only=("ParentRecordId",))
+            exists = sf.query(f"SELECT Id FROM AssignedResource WHERE ServiceAppointmentId = '{sa_id}' "
+                              f"AND ServiceResourceId = '{tech_id}' LIMIT 1")
             if not exists["totalSize"]:
                 sf.AssignedResource.create(
-                    {"ServiceAppointmentId": sa_id, "ServiceResourceId": resource_id})
-                print(f"  linked  technician -> {sa_id}")
-    except Exception as e:  # noqa: BLE001 — optional enrichment, never block the spine
-        print(f"\n  ! technician link skipped ({type(e).__name__}): {e}")
-        print("    (reads still work; the technician read just returns null — fine for the demo)")
+                    {"ServiceAppointmentId": sa_id, "ServiceResourceId": tech_id})
+            number = sf.ServiceAppointment.get(sa_id)["AppointmentNumber"]
+            reason = (REASONS_IN if warranty_active else REASONS_OUT)[mi % len(REASONS_IN)]
+            rows.append((number, model_id, tag, reason))
+            case += 1
+            print(f"  [{case:>2}/{len(models) * 2}] {number:<12} {model_id:<10} {tag:<16} -> {reason}")
 
-    print("\nDone. Fire the recovery flow against either AppointmentNumber:")
-    for number, label in appointments:
-        print(f"  {number:<12} {label}")
-    print("\nSmoke-test a read first — see the Apex README §5 for the curl.")
+    # --- the fire menu ------------------------------------------------------------------------
+    print("\n=== FIRE MENU — pick any AppointmentNumber + its reason ===")
+    print(f"  {'Appt':<12} {'Model':<10} {'Warranty':<16} {'Reason':<22} Expect")
+    for number, model_id, tag, reason in rows:
+        print(f"  {number:<12} {model_id:<10} {tag:<16} {reason:<22} {_EXPECT.get(reason, '')}")
+    print("\nFire one (real send armed on Render):")
+    print('  curl -X POST https://fieldflow-ai-w6bm.onrender.com/sim/appointment-at-risk \\')
+    print('    -H "Content-Type: application/json" \\')
+    print(f'    -d \'{{"workOrderId":"WO-DEMO","appointmentId":"{rows[0][0]}",'
+          f'"reason":"{rows[0][3]}","eventId":"evt-demo"}}\'')
+
+
+def ensure_technicians(sf, esc) -> list[str]:
+    """Make sure the named ServiceResource pool exists (match by Name; create from a free user when
+    missing). A user can own only one active ServiceResource, so we never double-assign a user."""
+    ids: list[str] = []
+    for name in TECHNICIANS:
+        found = sf.query(f"SELECT Id FROM ServiceResource WHERE Name = '{esc(name)}' LIMIT 1")
+        if found["totalSize"]:
+            ids.append(found["records"][0]["Id"])
+            continue
+        free = sf.query("SELECT Id FROM User WHERE IsActive = true AND Id NOT IN "
+                        "(SELECT RelatedRecordId FROM ServiceResource) ORDER BY CreatedDate LIMIT 1")
+        if not free["totalSize"]:
+            print(f"  ! no free user for technician '{name}' (reusing the pool we have)")
+            break
+        rid = sf.ServiceResource.create(
+            {"Name": name, "IsActive": True, "ResourceType": "T",
+             "RelatedRecordId": free["records"][0]["Id"]})["id"]
+        ids.append(rid)
+    if not ids:  # fall back to any existing resource so appointments can still be assigned
+        any_res = sf.query("SELECT Id FROM ServiceResource WHERE IsActive = true LIMIT 1")
+        ids = [r["Id"] for r in any_res["records"]]
+    return ids
+
+
+def clean(sf, esc) -> None:
+    """Delete the FieldFlow demo chain (tagged records). Order respects dependencies. ServiceResources
+    are left (they're tied to users and reusable)."""
+    tag = f"{TAG}"
+    print(f"Cleaning demo records tagged '{tag}'...")
+    # ServiceAppointments + their AssignedResources (via the tagged WorkOrders)
+    wos = sf.query(f"SELECT Id FROM WorkOrder WHERE Subject LIKE '{tag}%'")["records"]
+    for wo in wos:
+        sas = sf.query(f"SELECT Id FROM ServiceAppointment WHERE ParentRecordId = '{wo['Id']}'")["records"]
+        for sa in sas:
+            ars = sf.query(f"SELECT Id FROM AssignedResource WHERE ServiceAppointmentId = '{sa['Id']}'")["records"]
+            for ar in ars:
+                sf.AssignedResource.delete(ar["Id"])
+            sf.ServiceAppointment.delete(sa["Id"])
+        sf.WorkOrder.delete(wo["Id"])
+    print(f"  deleted {len(wos)} WorkOrders + their appointments")
+    accts = sf.query(f"SELECT Id FROM Account WHERE Name LIKE '{tag}:%'")["records"]
+    for acct in accts:
+        for asset in sf.query(f"SELECT Id FROM Asset WHERE AccountId = '{acct['Id']}'")["records"]:
+            sf.Asset.delete(asset["Id"])
+        for con in sf.query(f"SELECT Id FROM Contact WHERE AccountId = '{acct['Id']}'")["records"]:
+            sf.Contact.delete(con["Id"])
+        sf.Account.delete(acct["Id"])
+    print(f"  deleted {len(accts)} Accounts (+ their Assets + Contacts)")
+    print("Done. (ServiceResources kept — they're tied to users and reusable.)")
 
 
 if __name__ == "__main__":
