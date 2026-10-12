@@ -16,7 +16,8 @@ from app.reconcile import find_lingering
 router = APIRouter(tags=["api"])
 
 
-@router.get("/health")
+# GET + HEAD: uptime monitors (UptimeRobot) probe with HEAD by default; a GET-only route 405s them.
+@router.api_route("/health", methods=["GET", "HEAD"])
 async def health() -> dict:
     return {"status": "ok"}
 

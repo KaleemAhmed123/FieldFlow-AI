@@ -35,6 +35,6 @@ const handler = createMcpHandler((server) => {
       return { content: [{ type: "text", text: JSON.stringify({ partNo, locations }) }] };
     },
   );
-});
+}, {}, { basePath: "/api" });  // route lives at /api/mcp; without basePath mcp-handler serves /mcp and 404s here
 
 export { handler as GET, handler as POST };

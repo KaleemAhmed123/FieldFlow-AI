@@ -310,6 +310,18 @@ set. Creds can sit in `.env` during offline dev without a billed send ever firin
 setting `VONAGE_TEST_TO` (digits only, **no `+`**) right before a demo. **$100 credit: one send per
 manual demo, never in a loop or a test.**
 
+**The private key on Render (it's gitignored, so it isn't in the deploy):** the `.key` file is a
+secret — never committed — so on Render the relative `app/resources/private.key` path doesn't exist
+and boot logs `vonage.private_key_unreadable` (harmless: it falls back to FakeVonage, but real send
+auth is impossible). Fix with **Render Secret Files** (no code change — the seam just `read_text()`s
+whatever path you give it):
+1. Render → the service → **Environment** → **Secret Files** → **Add Secret File**.
+2. Filename `vonage_private.key`; paste the full PEM (`-----BEGIN PRIVATE KEY-----` … block) from your
+   local `app/resources/private.key`.
+3. It mounts at **`/etc/secrets/vonage_private.key`** → set env var
+   `VONAGE_PRIVATE_KEY_PATH=/etc/secrets/vonage_private.key` → Save → Render redeploys, key readable.
+Setting the key alone fires nothing — the send still arms only when `VONAGE_TEST_TO` is also set.
+
 **The postback trick:** each slot's button carries a hidden string
 `postback_data = "correlationId|slotId|version"`. Vonage echoes it back on the inbound webhook, so
 `/webhooks/inbound` alone knows which case, which slot, and which offer version (NFR-6 stale guard)
@@ -508,6 +520,7 @@ pnpm dev                            # dashboard http://localhost:3000 · API /ap
 # --- WIRE THE ORCHESTRATOR TO IT ---
 # In apps/orchestrator/.env:  ECOM_API_URL=http://localhost:3000  (then restart the app)
 # RestInventory swaps in for FakeInventory automatically — the graph/tests don't change.
+# LIVE (Render): set ECOM_API_URL=https://field-flow-ai.vercel.app on the Render service instead.
 
 # --- The HTTP contract (what RestInventory calls) ---
 curl http://localhost:3000/api/stock/PCB-492                 # {partNo, locations:[{location,qty}]}
@@ -519,9 +532,32 @@ curl -X POST http://localhost:3000/api/reserve -H 'content-type: application/jso
 # it -> the reserve refuses instead of overselling. "Set" + a number restores stock.
 ```
 
-- **Build-verified, live-DB pending your creds.** `pnpm build` compiles + type-checks; the live
-  seed/read/reserve round-trip needs your Supabase project. The MCP server (`/api/mcp`) is read-only
-  (`list_products`, `get_stock`) — its consumer is the admin copilot (next build #4).
+### DEPLOYED (live on Vercel, 2026-10-12)
+
+- **Public URL: https://field-flow-ai.vercel.app** — this is the value Render's `ECOM_API_URL` points at.
+- **How it was deployed (Vercel dashboard → Import Git repo):**
+  - Repo `KaleemAhmed123/FieldFlow-AI`, **Root Directory = `apps/ecom`** (the monorepo key step — the
+    Next.js build is self-contained there; this is the OPPOSITE of the Render service's blank root).
+  - Framework = Next.js (auto), package manager = pnpm (`pnpm-lock.yaml` present), build = default.
+  - Two env vars (from `apps/ecom/.env.local`): `NEXT_PUBLIC_SUPABASE_URL` + `SUPABASE_SERVICE_ROLE_KEY`.
+  - No `vercel.json` needed; `next.config.mjs` already allows `placehold.co` images. No DB work (schema +
+    seed already ran on the `fieldflow-ecom` Supabase project — Vercel just serves against it).
+- **Verified live 2026-10-12:**
+  ```
+  GET /api/products        → HTTP 200, 86 products          ✅
+  GET /api/stock/PCB-492   → {"partNo":"PCB-492","locations":[{"location":"Noida","qty":1}]}  ✅
+  POST /api/mcp (init)      → HTTP 404 "Not found"            ✗  (see caveat)
+  ```
+  (`/api/reserve` not fired by hand — it mutates stock; the orchestrator exercises it. Contract + the
+  atomic SQL were proven on the live DB at build-step-13.)
+- **Writes are intentionally open (no auth)** — POC with fake data; a stray mutation is reversed with the
+  dashboard "Set" button or a re-`pnpm seed`. Locking them would mean editing `RestInventory` + a Render
+  env var, so it was skipped on purpose (user decision, 2026-10-12).
+- **⚠ MCP caveat (`/api/mcp` 404):** `createMcpHandler` defaults its base path to `""`, so it serves at
+  `/mcp`; our route lives at `/api/mcp`, so the handler 404s. One-line fix: pass `{}, { basePath: "/api" }`
+  as the 2nd+3rd args in [`app/api/mcp/route.ts`](apps/ecom/app/api/mcp/route.ts). **Not yet applied** — the
+  MCP server's only consumer is the admin copilot (build-step-14, not built), so the live stock-read path
+  is unaffected. Apply + redeploy before build-step-14 needs it.
 - Write-up: [`build-step-13-ecom-inventory.md`](docs/specs/field-service-recovery/build-step-13-ecom-inventory.md) §7.
 
 ## 4. Scenario → where it's proven
