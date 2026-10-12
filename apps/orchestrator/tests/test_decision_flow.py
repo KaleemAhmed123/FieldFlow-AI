@@ -109,6 +109,8 @@ async def test_cosmetic_reason_maps_to_parts_archetype(sessionmaker, vonage, gra
     case = await _case(sessionmaker, "WO-WRONGPART")
     assert case.status == "OPTIONS_SENT"
     assert len(case.sent_card["card"]["options"]) == 2
+    # slice 5: a parts offer invites a photo of the unit label (the inbound-image primitive).
+    assert "photo" in {a["type"] for a in case.sent_card["card"]["actions"]}
 
 
 async def test_happy_path_executes_to_closed(sessionmaker, vonage, graph):
@@ -128,3 +130,20 @@ async def test_happy_path_executes_to_closed(sessionmaker, vonage, graph):
     assert confirmation["kind"] == "confirmation" and confirmation["body"]
     action_types = {a["type"] for a in confirmation["actions"]}
     assert "calendar" in action_types and "dial" in action_types
+    # slice 6: a service-report PDF rides on the confirmation + the trace.
+    assert "pdf" in action_types
+    assert case.decision_trace["serviceReport"]["url"].endswith(".pdf")
+
+
+async def test_photo_records_simulated_ocr_on_the_trace(sessionmaker, vonage, graph):
+    # slice 5: the customer sends a label photo → simulated OCR confirms the model on the trace.
+    event = make_event(work_order_id="WO-PHOTO", reason="part_missing")
+    async with sessionmaker() as s:
+        await case_service.handle_event(s, event, graph=graph)
+    async with sessionmaker() as s:
+        res = await case_service.record_photo(s, "WO-PHOTO")
+
+    assert res["ok"] and res["matchesAsset"]
+    case = await _case(sessionmaker, "WO-PHOTO")
+    assert case.decision_trace["photoVerified"]["model"]          # the asset's model, read by OCR
+    assert "simulated" in case.decision_trace["photoVerified"]["source"].lower()
