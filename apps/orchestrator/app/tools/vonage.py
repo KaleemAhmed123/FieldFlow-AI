@@ -39,7 +39,7 @@ def actions_to_suggestions(actions: list[CardAction]) -> list[dict]:
             chip["share_location"] = True
         elif a.type == "dial":
             chip["phone_number"] = a.value
-        elif a.type == "view":
+        elif a.type in ("view", "pdf"):
             chip["url"] = a.value
         out.append(chip)
     return out

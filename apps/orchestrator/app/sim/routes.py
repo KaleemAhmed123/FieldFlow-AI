@@ -96,6 +96,18 @@ async def delivery_status(body: DeliveryStatusRequest, request: Request) -> dict
     return {"recorded": True, "messageUuid": body.messageUuid, "status": body.status}
 
 
+class PhotoRequest(BaseModel):
+    correlationId: str
+
+
+@router.post("/photo")
+async def photo(body: PhotoRequest, request: Request) -> dict:
+    """Offline twin of a customer sending a photo of the unit label (SRS FR-8, inbound image).
+    Runs simulated OCR and records `photoVerified` on the case's decision trace (Step 5 story)."""
+    async with get_sessionmaker()() as session:
+        return await case_service.record_photo(session, body.correlationId)
+
+
 class FaultRequest(BaseModel):
     salesforceDown: bool = True
 

@@ -49,6 +49,11 @@ _CONTEXT_READS = [
 # Demo support line used for "Call support" when a technician's own number isn't on the record.
 SUPPORT_PHONE = "+91-80000-00000"
 
+# The service-report PDF link put on the confirmation (SRS FR-13b, the PDF-rich-card primitive).
+# ponytail: a single placeholder URL — a real per-case generated PDF is the gated live step; the
+# point here is to show the primitive + the "report generated" trace note.
+SERVICE_REPORT_URL = "https://field-flow-ai.vercel.app/service-report.pdf"
+
 
 def _confirmation_body(archetype: str, context: dict, slot: dict) -> str:
     """The closing message once the customer has picked a slot (slice 3). Archetype-aware so the
@@ -76,10 +81,11 @@ def _confirmation_actions(context: dict, slot: dict) -> list[CardAction]:
     return actions
 
 
-def _offer_actions(context: dict) -> list[CardAction]:
+def _offer_actions(context: dict, archetype: str = "delay") -> list[CardAction]:
     """Suggested action chips on the reschedule offer (slice 2). These are the 'RCS is a control
     plane' moments: the customer shares GPS so we can confirm the tech's ETA, or calls in one tap.
-    Scenario-agnostic — every archetype's offer gets them; per-archetype extras come in slice 3."""
+    A parts job also gets a 'send a photo of the label' chip (slice 5) — the inbound-image primitive
+    that confirms the exact model before the part is fitted."""
     tech = context.get("technician") or {}
     phone = tech.get("phone")
     actions = [CardAction(type="share_location", label="Share my location")]
@@ -88,6 +94,8 @@ def _offer_actions(context: dict) -> list[CardAction]:
                                   value=phone))
     else:
         actions.append(CardAction(type="dial", label="Call support", value=SUPPORT_PHONE))
+    if archetype == "parts":
+        actions.append(CardAction(type="photo", label="Send a photo of the label"))
     return actions
 
 
@@ -304,7 +312,8 @@ def build_graph(
         # wrote it (generate_options); the deterministic floor supplies it offline.
         card = Card(kind="carousel", title="Let's get your appointment back on track",
                     body=state.get("customerMessage", ""),
-                    options=opts, actions=_offer_actions(state["context"]),
+                    options=opts,
+                    actions=_offer_actions(state["context"], state.get("archetype", "delay")),
                     version=version)  # version → RCS postback (stale guard, NFR-6)
         sent = vonage.send_card(state["event"]["correlationId"], card)
         log.info("graph.offer_to_customer", options=len(opts), version=version)
@@ -440,12 +449,16 @@ def build_graph(
         # and one-tap Call. This becomes the case's last sent card (SRS stage 13).
         slot = state.get("chosenSlot", {})
         archetype = state.get("archetype", "delay")
+        # Slice 6: attach the service-report PDF (SRS FR-13b) to the confirmation + the trace.
+        report = {"url": SERVICE_REPORT_URL, "source": "generated service report (POC)"}
+        actions = [*_confirmation_actions(state["context"], slot),
+                   CardAction(type="pdf", label="Service report (PDF)", value=report["url"])]
         card = Card(kind="confirmation", title="You're all set",
-                    body=_confirmation_body(archetype, state["context"], slot),
-                    actions=_confirmation_actions(state["context"], slot))
+                    body=_confirmation_body(archetype, state["context"], slot), actions=actions)
         sent = vonage.send_card(state["event"]["correlationId"], card)
+        decision = {**state.get("decision", {}), "serviceReport": report}
         log.info("graph.verify.confirmation_sent", slot=slot.get("slotId"))
-        return {"card": card.model_dump(), "sent": sent, "status": "VERIFIED"}
+        return {"card": card.model_dump(), "sent": sent, "decision": decision, "status": "VERIFIED"}
 
     def close(state: GraphState) -> GraphState:
         if state.get("approval") and not state["approval"].get("approved"):

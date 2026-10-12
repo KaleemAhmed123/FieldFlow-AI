@@ -145,6 +145,27 @@ async def record_delivery_status(
     log.info("case.delivery_status", messageUuid=message_uuid, status=status)
 
 
+async def record_photo(session: AsyncSession, correlation_id: str) -> dict:
+    """The customer sent a photo of the unit label (SRS FR-8, the inbound-image primitive). We run
+    'vision/OCR' — SIMULATED for the POC: the read model is the asset's known model, matched against
+    the Salesforce record — and record `photoVerified` on the decision trace so the panel shows it.
+
+    # ponytail: simulated OCR; swap for a real vision call at the gated live fire. /sim/photo is the
+    # offline twin; a real inbound-image webhook needs a device-number→case map (not built yet).
+    """
+    case = (await session.execute(
+        select(Case).where(Case.correlation_id == correlation_id))).scalar_one_or_none()
+    if case is None:
+        return {"ok": False, "reason": "unknown case"}
+    model = (case.context or {}).get("asset", {}).get("model", "unknown model")
+    result = {"model": model, "matchesAsset": True, "source": "simulated OCR (POC)"}
+    case.decision_trace = {**(case.decision_trace or {}), "photoVerified": result}
+    session.add(AuditLog(correlation_id=correlation_id, kind="photo_verified", payload=result))
+    await session.commit()
+    log.info("case.photo_verified", correlationId=correlation_id, model=model)
+    return {"ok": True, **result}
+
+
 async def handle_event(session: AsyncSession, event: AppointmentAtRisk, *, graph) -> dict:
     correlation_id.set(event.correlationId)
 
