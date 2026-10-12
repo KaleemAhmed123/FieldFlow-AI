@@ -457,6 +457,34 @@ uv run pytest -q tests/test_event_source.py
 - Setup lives in [`docs/specs/field-service-recovery/salesforce-handoff.md`](docs/specs/field-service-recovery/salesforce-handoff.md);
   the step write-up is [`build-step-9c-salesforce-trigger.md`](docs/specs/field-service-recovery/build-step-9c-salesforce-trigger.md).
 
+### 3g-b. The LIVE trigger we actually use: an Apex record trigger → HTTP callout (in progress)
+
+*Instead of the heavy gRPC subscriber above, a record-triggered Apex trigger on `ServiceAppointment`
+does an `@future` HTTP callout to the orchestrator when the appointment is marked at-risk. No ngrok —
+the orchestrator is already public on Render. Spec:
+[`salesforce-trigger-and-rich-rcs.md`](docs/specs/field-service-recovery/salesforce-trigger-and-rich-rcs.md).*
+
+```bash
+# BUILT (step 1): the receiving endpoint — maps the SF payload → publishes to the same exchange.
+uv run pytest -q tests/test_sf_hook.py        # 4 green (secret-gate, maps+publishes, 400 on bad)
+# Fire it by hand (what the Apex trigger will do) — blank SF_HOOK_SECRET offline = no header needed:
+curl -X POST http://localhost:8000/webhooks/sf/at-risk -H "Content-Type: application/json" \
+  -d '{"WorkOrderId__c":"WO-10281","AppointmentId__c":"SA-19281","Reason__c":"technician_delay","DelayMinutes__c":50}'
+
+# BUILT (step 2): deploy Salesforce Apex + fields via the Tooling API (no sf CLI, reuses SF_* creds).
+uv run python apps/salesforce-apex/deploy_sf.py --self-check    # offline parsing check
+uv run python apps/salesforce-apex/deploy_sf.py --fields        # create At_Risk__c + reason + delay
+uv run python apps/salesforce-apex/deploy_sf.py \
+  apps/salesforce-apex/FieldFlowAtRisk.cls \
+  apps/salesforce-apex/ServiceAppointmentAtRisk.trigger \
+  apps/salesforce-apex/FieldFlowAtRiskTest.cls                  # step 3 — the trigger/classes (TBD)
+```
+
+- **Secret:** the Apex sends `X-FieldFlow-Secret`; the endpoint checks it against `SF_HOOK_SECRET`
+  (blank → skipped, offline/dev). Set it on Render **and** in the SF Named Credential before going live.
+- **Still TODO (step 3):** the Apex trigger + class + test files, a `FieldFlow` Named Credential
+  (URL + secret header), then tick `At_Risk__c` on a seeded appointment for the first live fire.
+
 ## 3h. Salesforce reads + reschedule: the real org via Apex REST (build step 12)
 
 *`RestSalesforce` calls the Apex class in `apps/salesforce-apex/` with the SAME 3 `SF_*` creds. Blank
