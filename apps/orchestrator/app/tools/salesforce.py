@@ -79,7 +79,8 @@ class FakeSalesforce:
             "AST-OOW": {"model": "Frostline Inverter Split AC XYZ-492", "warranty": "expired"},
         }
         self._technicians: dict[str, dict] = {
-            "SR-1": {"name": "Rahul Kumar", "skills": ["inverter-ac"], "territory": "Noida"},
+            "SR-1": {"name": "Rahul Kumar", "skills": ["inverter-ac"], "territory": "Noida",
+                     "phone": "+91-90000-00042"},  # enables the one-tap "Call technician" (slice 2)
         }
 
     def _guard(self) -> None:
