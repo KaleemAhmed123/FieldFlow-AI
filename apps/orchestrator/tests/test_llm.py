@@ -13,6 +13,7 @@ from app.llm.proposer import (
     Proposer,
     RateLimited,
     build_proposer,
+    deterministic_proposal,
     parse_proposal,
 )
 
@@ -82,6 +83,30 @@ def test_parse_strips_nulls_and_clamps_confidence():
     assert "partNo" not in pr.options[0]     # null dropped
     assert pr.llm_confidence == 1.0          # out-of-range self-rating clamped to [0,1]
     assert pr.archetype == "parts"
+
+
+# --- customer message (slice 1: the RCS body) --------------------------------------------------
+def test_deterministic_proposal_writes_a_customer_message():
+    # every archetype gets a non-empty, reason-aware body; parts/delay read differently.
+    delay = deterministic_proposal("technician_delay", CTX).customer_message
+    parts = deterministic_proposal("part_missing", CTX).customer_message
+    assert "Rahul" in delay and delay != parts
+    assert all(deterministic_proposal(r, CTX).customer_message
+               for r in ("technician_delay", "part_missing", "asset_complex"))
+
+
+def test_parse_falls_back_to_template_message_when_model_omits_it():
+    # the model returned no customer_message → the warm template fills it (body never empty).
+    raw = ('{"options":[{"slotId":"s","label":"L","technician":"Rahul"}],'
+           '"confidence":0.8,"explanation":"x"}')
+    assert parse_proposal(raw, "groq", "technician_delay", CTX).customer_message
+
+
+def test_parse_keeps_the_models_customer_message():
+    raw = ('{"options":[{"slotId":"s","label":"L","technician":"R"}],"confidence":0.8,'
+           '"explanation":"x","customer_message":"Hi! Sorry for the delay."}')
+    assert parse_proposal(raw, "groq", "technician_delay", CTX).customer_message \
+        == "Hi! Sorry for the delay."
 
 
 # --- build_proposer wiring from settings -------------------------------------------------------

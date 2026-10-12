@@ -24,6 +24,9 @@ async def test_event_produces_case_with_card_and_trace(sessionmaker, vonage, gra
     assert case.status == "OPTIONS_SENT"
     assert case.sent_card["card"]["kind"] == "carousel"
     assert len(case.sent_card["card"]["options"]) == 2        # policy-validated slots
+    assert case.sent_card["card"]["body"]                     # slice 1: the AI message is present
+    action_types = {a["type"] for a in case.sent_card["card"]["actions"]}
+    assert {"share_location", "dial"} <= action_types        # slice 2: the suggested-action chips
     assert case.decision_trace["policyResult"] == "APPROVED"
     assert case.decision_trace["decision"] == "OFFER_RESCHEDULE"
     assert len(audits) == 1 and audits[0].kind == "options_sent"

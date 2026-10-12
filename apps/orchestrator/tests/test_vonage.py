@@ -15,9 +15,15 @@ import json
 from app.config import settings
 from app.db.models import AuditLog, Case
 from app.services import case_service
-from app.tools.vonage import FakeVonage, VonageMessagesClient, build_vonage, card_to_rcs
+from app.tools.vonage import (
+    FakeVonage,
+    VonageMessagesClient,
+    actions_to_suggestions,
+    build_vonage,
+    card_to_rcs,
+)
 from app.webhooks.routes import parse_postback, verify_vonage_jwt
-from fieldflow_contract import Card, SlotOption, make_event
+from fieldflow_contract import Card, CardAction, SlotOption, make_event
 from sqlalchemy import func, select
 
 
@@ -44,6 +50,17 @@ def test_payment_card_is_open_url_action():
     card = Card(kind="payment", title="Approve & Pay ₹3,700", payUrl="https://rzp.io/i/x")
     sugg = card_to_rcs("916394493446", card, "agent", "WO-9")["card"]["suggestions"][0]
     assert sugg["type"] == "action" and sugg["url"] == "https://rzp.io/i/x"
+
+
+def test_actions_map_to_rcs_suggestions():
+    chips = actions_to_suggestions([
+        CardAction(type="share_location", label="Share my location"),
+        CardAction(type="dial", label="Call Rahul", value="+91-90000-00042"),
+        CardAction(type="view", label="View appointment", value="https://x/case"),
+    ])
+    assert chips[0]["share_location"] is True and chips[0]["postback_data"] == "share_location"
+    assert chips[1]["phone_number"] == "+91-90000-00042"      # one-tap dial
+    assert chips[2]["url"] == "https://x/case"
 
 
 # --- build_vonage arming -------------------------------------------------------------------------
