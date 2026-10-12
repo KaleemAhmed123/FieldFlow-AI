@@ -15,13 +15,34 @@ import uuid
 from pathlib import Path
 from typing import Protocol
 
-from fieldflow_contract import Card
+from fieldflow_contract import Card, CardAction
 
 from app.logging import get_logger
 
 log = get_logger("vonage")
 
 MAX_SUGGESTIONS = 4  # Vonage RCS allows at most 4 suggestions per card.
+
+
+def actions_to_suggestions(actions: list[CardAction]) -> list[dict]:
+    """Map our declarative CardActions → Vonage RCS suggestion chips (slice 2). share_location asks
+    the phone to send GPS, dial opens the dialer, view opens a URL, calendar adds the event.
+
+    # ponytail: the exact per-type wire fields are Vonage's to confirm at the gated live fire — this
+    # is the one spot to adjust. The panel (the demo surface) renders the actions from card.actions
+    # directly, so a wire tweak here never affects what's shown on screen.
+    """
+    out: list[dict] = []
+    for a in actions[:MAX_SUGGESTIONS]:
+        chip: dict = {"type": "action", "text": a.label[:25], "postback_data": a.type}
+        if a.type == "share_location":
+            chip["share_location"] = True
+        elif a.type == "dial":
+            chip["phone_number"] = a.value
+        elif a.type == "view":
+            chip["url"] = a.value
+        out.append(chip)
+    return out
 
 # RCS requires an image on every carousel card (a text-only card is a 422). This MUST be a static,
 # directly-addressable image URL (no query string): Google's RCS backend (RBM) fetches/validates the
@@ -132,6 +153,19 @@ class VonageMessagesClient:
 
     def send_card(self, to: str, card: Card) -> dict:
         correlation_id = to  # the call site passes correlationId here; the device is self._to
+        if card.body and card.kind != "payment":
+            # Lead with the AI message as a plain RCS text carrying the action chips (Share Location
+            # / Dial), then the rich slot cards — the natural chat UX. Best-effort: a failed text
+            # never blocks the card.
+            lead = {"from": self._agent_id, "to": self._to, "channel": "rcs",
+                    "message_type": "text", "text": card.body[:2000]}
+            suggestions = actions_to_suggestions(card.actions)
+            if suggestions:
+                lead["suggestions"] = suggestions
+            try:
+                self._post(lead, "text")
+            except Exception as exc:  # noqa: BLE001 — body is nice-to-have, never fail the card on it
+                log.error("vonage.body_text_failed", error=str(exc))
         payload = card_to_rcs(self._to, card, self._agent_id, correlation_id)
         data = self._post(payload, "card")
         log.info("vonage.send_card", to=self._to, kind=card.kind,
