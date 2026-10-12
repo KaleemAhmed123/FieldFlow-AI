@@ -50,6 +50,32 @@ _CONTEXT_READS = [
 SUPPORT_PHONE = "+91-80000-00000"
 
 
+def _confirmation_body(archetype: str, context: dict, slot: dict) -> str:
+    """The closing message once the customer has picked a slot (slice 3). Archetype-aware so the
+    three journeys end differently — a part-fit, a specialist visit, or a simple reschedule."""
+    tech = context.get("technician", {}).get("name") or "your technician"
+    model = context.get("asset", {}).get("model") or "appliance"
+    when = slot.get("label") or "the new time"
+    if archetype == "parts":
+        return (f"All set — {tech} will fit the part on your {model} at {when}. "
+                f"We'll message you if anything changes.")
+    if archetype == "complex":
+        return (f"Booked — a specialist will see your {model} at {when}. "
+                f"Thanks for your patience.")
+    return f"You're confirmed — {tech} will arrive for your {model} at {when}. See you then!"
+
+
+def _confirmation_actions(context: dict, slot: dict) -> list[CardAction]:
+    """Actions on the confirmation card: add the appointment to the calendar, and one-tap call the
+    technician. (Open-URL is already shown by the payment card, so no stand-in 'View' here.)"""
+    actions = [CardAction(type="calendar", label="Add to calendar", value=slot.get("label", ""))]
+    tech = context.get("technician") or {}
+    if tech.get("phone"):
+        actions.append(CardAction(type="dial", label=f"Call {tech.get('name', 'technician')}",
+                                  value=tech["phone"]))
+    return actions
+
+
 def _offer_actions(context: dict) -> list[CardAction]:
     """Suggested action chips on the reschedule offer (slice 2). These are the 'RCS is a control
     plane' moments: the customer shares GPS so we can confirm the tech's ETA, or calls in one tap.
@@ -118,6 +144,7 @@ class GraphState(TypedDict, total=False):
     version: int
     approval: dict[str, Any]
     reply: dict[str, Any]
+    chosenSlot: dict[str, Any]
     executed: dict[str, Any]
     status: str
     note: str
@@ -330,8 +357,9 @@ def build_graph(
         if _is_chargeable(state, chosen):
             return Command(goto="build_quote",
                            update={"executed": result, "status": "EXECUTED",
-                                   "chosenPart": chosen["partNo"]})
-        return Command(goto="verify", update={"executed": result, "status": "EXECUTED"})
+                                   "chosenSlot": chosen, "chosenPart": chosen["partNo"]})
+        return Command(goto="verify", update={"executed": result, "status": "EXECUTED",
+                                              "chosenSlot": chosen})
 
     # --- Commerce branch (Step 6): quote → [human gate if high-value] → order+link → pay → settle.
     # Each money step is a MUTATION; the deterministic work (price authority, amount checks,
@@ -408,7 +436,16 @@ def build_graph(
                        update={"captured": receipt, "decision": decision, "status": "PAID"})
 
     def verify(state: GraphState) -> GraphState:
-        return {"status": "VERIFIED"}
+        # Close the loop with a confirmation card (slice 3): archetype-aware body + Add-to-Calendar
+        # and one-tap Call. This becomes the case's last sent card (SRS stage 13).
+        slot = state.get("chosenSlot", {})
+        archetype = state.get("archetype", "delay")
+        card = Card(kind="confirmation", title="You're all set",
+                    body=_confirmation_body(archetype, state["context"], slot),
+                    actions=_confirmation_actions(state["context"], slot))
+        sent = vonage.send_card(state["event"]["correlationId"], card)
+        log.info("graph.verify.confirmation_sent", slot=slot.get("slotId"))
+        return {"card": card.model_dump(), "sent": sent, "status": "VERIFIED"}
 
     def close(state: GraphState) -> GraphState:
         if state.get("approval") and not state["approval"].get("approved"):
