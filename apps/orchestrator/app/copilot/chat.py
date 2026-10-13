@@ -86,21 +86,55 @@ def _result(answer: str, used: list, down: list, *, truncated: bool = False) -> 
     return out
 
 
+# ponytail: cap each tool result fed back to the model so one big list (e.g. all 86 parts) can't
+# blow Groq's free-tier ~8k tokens/min budget and 413 the turn. Raise it if you leave the free tier.
+_TOOL_RESULT_CAP = 2500
+
+
+class _LlmError(Exception):
+    """A model-call failure (rate limit, size, outage) carrying a user-facing message."""
+
+
+def _friendly_llm_error(exc: Exception) -> str:
+    m = str(exc).lower()
+    if any(k in m for k in ("rate_limit", "too large", "413", "429", "tokens per minute", "tpm")):
+        return ("That needed more data than the model's free tier allows (Groq ~8k tokens/min). "
+                "Ask something narrower — e.g. the stock of one part — or upgrade the Groq tier.")
+    return "The copilot couldn't reach the model just now. Please try again."
+
+
+async def _llm_create(groq_client: Any, **kwargs) -> Any:
+    """Call Groq off the event loop; turn any failure into an _LlmError (never a 500)."""
+    try:
+        return await asyncio.to_thread(groq_client.chat.completions.create, **kwargs)
+    except Exception as exc:  # Groq 413/429, network, bad request — all handled gracefully
+        log.warning("copilot.llm_error", error=str(exc))
+        raise _LlmError(_friendly_llm_error(exc)) from exc
+
+
 async def run_copilot(
     message: str, *, sources: dict[str, Any], groq_client: Any, model: str,
 ) -> dict:
     """One single-turn copilot answer. `sources` = {label: McpClient}; empty → the model answers
-    from nothing (or says it needs a tool). Returns {answer, toolsUsed[, truncated]}."""
+    from nothing (or says it needs a tool). Returns {answer, toolsUsed[, truncated]}. A model
+    error (rate limit, size) returns a friendly message — it never raises to a 500."""
     schemas, route, down = await _gather(sources)
     messages: list[dict] = [{"role": "system", "content": _SYSTEM},
                             {"role": "user", "content": message}]
     used: list[dict] = []
+    try:
+        return await _run_loop(message, messages, schemas, route, down, used, groq_client, model)
+    except _LlmError as exc:
+        return _result(str(exc), used, down)
+
+
+async def _run_loop(message, messages, schemas, route, down, used, groq_client, model):  # noqa: ANN001, ANN201
     for _ in range(_MAX_STEPS):
         kwargs: dict = {"model": model, "messages": messages, "temperature": 0}
         if schemas:
             kwargs["tools"] = schemas
             kwargs["tool_choice"] = "auto"
-        resp = await asyncio.to_thread(groq_client.chat.completions.create, **kwargs)
+        resp = await _llm_create(groq_client, **kwargs)
         msg = resp.choices[0].message
         calls = msg.tool_calls or []
         if not calls:
@@ -129,10 +163,11 @@ async def run_copilot(
                     log.warning("copilot.tool_failed", tool=real, error=str(exc))
                     text = f"error calling tool: {type(exc).__name__}: {exc}"
             used.append({"name": real, "args": args, "result": text[:2000]})
-            messages.append({"role": "tool", "tool_call_id": tc.id, "content": text})
+            model_text = text if len(text) <= _TOOL_RESULT_CAP else \
+                text[:_TOOL_RESULT_CAP] + "\n…[truncated — too long for the model's token budget]"
+            messages.append({"role": "tool", "tool_call_id": tc.id, "content": model_text})
     # Step cap reached — one last call with no tools to force a final answer.
-    resp = await asyncio.to_thread(
-        groq_client.chat.completions.create, model=model, messages=messages, temperature=0)
+    resp = await _llm_create(groq_client, model=model, messages=messages, temperature=0)
     return _result(resp.choices[0].message.content or "", used, down, truncated=True)
 
 
