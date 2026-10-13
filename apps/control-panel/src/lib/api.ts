@@ -142,6 +142,7 @@ export interface CopilotReply {
   answer?: string;
   toolsUsed?: CopilotToolCall[];
   truncated?: boolean;
+  sourcesUnavailable?: string[];
 }
 
 export const copilotChat = (message: string): Promise<CopilotReply> =>

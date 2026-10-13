@@ -14,6 +14,7 @@ interface Msg {
   text: string;
   tools?: CopilotToolCall[];
   truncated?: boolean;
+  unavailable?: string[];
   error?: boolean;
 }
 
@@ -66,6 +67,11 @@ function Bubble({ m }: { m: Msg }) {
         >
           <p className="whitespace-pre-wrap break-words">{m.text}</p>
           {m.tools && m.tools.length > 0 && <ToolTrace tools={m.tools} />}
+          {m.unavailable && m.unavailable.length > 0 && (
+            <p className="mt-1 font-mono text-[9px] text-warn">
+              unavailable: {m.unavailable.join(", ")} (tools offline)
+            </p>
+          )}
           {m.truncated && (
             <p className="mt-1 font-mono text-[9px] text-warn">
               stopped at the tool-call limit
@@ -100,7 +106,13 @@ export function CopilotChat() {
       } else {
         setMessages((m) => [
           ...m,
-          { role: "assistant", text: r.answer ?? "", tools: r.toolsUsed, truncated: r.truncated },
+          {
+            role: "assistant",
+            text: r.answer ?? "",
+            tools: r.toolsUsed,
+            truncated: r.truncated,
+            unavailable: r.sourcesUnavailable,
+          },
         ]);
       }
     } catch (e) {
