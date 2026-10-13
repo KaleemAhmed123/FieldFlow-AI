@@ -123,18 +123,15 @@ def card_to_rcs(to: str, card: Card, agent_id: str, correlation_id: str) -> dict
             }],
         }}
     if not card.options:
-        # A confirmation (or any card with no slot options): ONE informational card — title + body +
-        # action chips — modelled on the payment card above (which delivers fine). NOT a carousel:
-        # empty carousel ("cards": []) is Vonage 422 "must have at least 2 items", which 500'd the
-        # resume on the real confirmation send. Chips on a card don't need the `description` a text
-        # suggestion does, so the PDF open_url rides here cleanly.
-        single = {"title": card.title[:200]}
-        if card.body:
-            single["text"] = card.body[:2000]
-        suggestions = actions_to_suggestions(card.actions)
-        if suggestions:
-            single["suggestions"] = suggestions
-        return {**base, "message_type": "card", "card": single}
+        # A confirmation (no slot options): send a PLAIN RCS TEXT — the one shape proven to deliver
+        # live (the offer's lead text). An empty carousel is a 422 ("must have at least 2 items"); a
+        # single `card` needs media and a text open_url chip needs a `description` Vonage rejects —
+        # both 422'd. So the body goes as text and any link action (PDF/report) rides INLINE in it.
+        text = card.body or card.title or ""
+        for a in card.actions:
+            if a.type in ("pdf", "view") and a.value:
+                text = f"{text}\n{a.label}: {a.value}"
+        return {**base, "message_type": "text", "text": text[:2000]}
     cards = [{
         "title": o.label[:200],
         "text": " · ".join(p for p in (o.technician, o.note) if p)[:2000],

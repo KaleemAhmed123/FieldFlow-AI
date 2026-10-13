@@ -54,18 +54,16 @@ def test_payment_card_is_open_url_action():
     assert sugg["type"] == "open_url" and sugg["url"] == "https://rzp.io/i/x"
 
 
-def test_confirmation_card_is_single_card_not_empty_carousel():
-    # A confirmation has a body + chips but NO slot options → map to ONE card, never a carousel. An
-    # empty carousel ("cards": []) is Vonage 422 "must have at least 2 items" (it 500'd the real
-    # confirmation send on the first live tap).
+def test_confirmation_maps_to_plain_text_with_inline_links():
+    # A card with NO slot options (confirmation) maps to a PLAIN TEXT — never an empty carousel
+    # ("cards": [] is a 422 that 500'd the live tap) — with link actions inlined in the body.
     card = Card(kind="confirmation", title="You're all set", body="You're confirmed for TOMORROW.",
                 actions=[CardAction(type="calendar", label="Add to calendar", value="TOMORROW"),
                          CardAction(type="pdf", label="Service report (PDF)", value="https://x/r.pdf")])
     msg = card_to_rcs("916394493446", card, "agent", "WO-9")
-    assert msg["message_type"] == "card" and "carousel" not in msg
-    assert msg["card"]["text"] == "You're confirmed for TOMORROW."
-    pdf = msg["card"]["suggestions"][0]  # calendar has no chip; the PDF open_url rides on the card
-    assert pdf["type"] == "open_url" and pdf["url"] == "https://x/r.pdf"
+    assert msg["message_type"] == "text" and "carousel" not in msg and "card" not in msg
+    assert "You're confirmed for TOMORROW." in msg["text"]
+    assert "https://x/r.pdf" in msg["text"]  # the PDF rides inline, not as a chip that 422s
 
 
 def test_actions_map_to_rcs_suggestions():

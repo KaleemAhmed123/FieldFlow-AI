@@ -30,8 +30,12 @@ def _removal_reason(cand: dict, context: dict) -> str | None:
     if case_state in TERMINAL_STATES:
         return f"case state {case_state} is terminal"
 
+    # Only enforce the skill match when we actually KNOW the technician's skills. With no assigned
+    # resource (skills unknown — e.g. an org without Field Service territory/skill setup), we can't
+    # claim a mismatch, so we don't strip the slot (the org assigns a skilled tech). Without this an
+    # appointment with no technician loses EVERY skill-requiring slot → empty offer → a 500 on send.
     skills = set(context.get("technician", {}).get("skills", []))
-    if (rs := cand.get("requiredSkill")) and rs not in skills:
+    if skills and (rs := cand.get("requiredSkill")) and rs not in skills:
         return f"technician lacks required skill '{rs}'"
 
     sla = context.get("slaWindowMinutes")
