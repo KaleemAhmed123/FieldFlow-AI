@@ -48,6 +48,21 @@ def test_access_token_cached_until_expiry() -> None:
     assert calls["n"] == 1  # second call used the cache
 
 
+def test_rotated_refresh_token_is_captured_and_popped_once() -> None:
+    # The ECA rotates: the refresh response carries a NEW refresh token. The client must keep it and
+    # flag it dirty exactly once so the route can persist it (else a restart reads a dead token).
+    def handler(req: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json={
+            "access_token": "ac-2", "refresh_token": "rt-2", "expires_in": 7200})
+
+    c = _client(handler)
+    assert c.pop_rotated_token() is None  # nothing rotated yet
+    c.access_token()  # refresh -> rt-1 rotated to rt-2
+    assert c.refresh_token == "rt-2"
+    assert c.pop_rotated_token() == "rt-2"  # flagged, returned once
+    assert c.pop_rotated_token() is None  # flag cleared
+
+
 def test_build_is_none_when_unarmed() -> None:
     # Ids set but no refresh token → still off (the one-time login hasn't run). Pin the token empty
     # so a developer's real .env (which may now carry a live SF_MCP_REFRESH_TOKEN) can't arm it.
