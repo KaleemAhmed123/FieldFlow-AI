@@ -5,9 +5,11 @@ from __future__ import annotations
 from fastapi import APIRouter, Request
 from fastapi.responses import Response
 from prometheus_client import CONTENT_TYPE_LATEST, generate_latest
+from pydantic import BaseModel
 from sqlalchemy import select
 
 from app.config import settings
+from app.copilot import build_groq_client, run_copilot
 from app.db.models import Case
 from app.db.session import get_sessionmaker
 from app.health import check_deps
@@ -84,6 +86,33 @@ async def copilot_tools(request: Request) -> dict:
                 "detail": "MCP not armed — set SF_MCP_* + run `python -m app.mcp.login` "
                           "(docs/specs/field-service-recovery/hosted-mcp-setup.md)."}
     return {"available": True, "tools": await client.list_tools()}
+
+
+class CopilotAsk(BaseModel):
+    message: str
+
+
+@router.post("/copilot/chat")
+async def copilot_chat(body: CopilotAsk, request: Request) -> dict:
+    """Admin copilot (build step 14): a plain-English question → Groq tool-calling over the live
+    SF + e-com MCP tools → a grounded answer plus `toolsUsed` (a mini decision-trace). Read-only.
+    Needs GROQ_API_KEY + at least one armed MCP source, else returns unavailable."""
+    sources: dict = {}
+    if (sf := request.app.state.mcp) is not None:
+        sources["salesforce"] = sf
+    if (ecom := request.app.state.ecom_mcp) is not None:
+        sources["ecom"] = ecom
+    if not settings.groq_api_key:
+        return {"available": False, "detail": "Copilot needs GROQ_API_KEY."}
+    if not sources:
+        return {"available": False,
+                "detail": "No MCP tools armed — set SF_MCP_* (run `python -m app.mcp.login`) "
+                          "and/or ECOM_API_URL."}
+    result = await run_copilot(
+        body.message, sources=sources,
+        groq_client=build_groq_client(settings), model=settings.groq_model,
+    )
+    return {"available": True, **result}
 
 
 @router.get("/dlq")

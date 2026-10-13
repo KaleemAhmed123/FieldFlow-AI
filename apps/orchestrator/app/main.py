@@ -32,7 +32,7 @@ from app.graph.build import build_graph
 from app.graph.checkpointer import checkpointer_scope
 from app.llm.proposer import build_proposer
 from app.logging import configure_logging, get_logger
-from app.mcp import build_mcp_client
+from app.mcp import build_ecom_mcp_client, build_mcp_client
 from app.queue.broker import Broker
 from app.rag import make_knowledge_store
 from app.services import case_service
@@ -81,9 +81,11 @@ async def lifespan(app: FastAPI):
     # swap line. A non-test key aborts the boot (POC is Test-Mode only).
     app.state.commerce = CommerceService(settings.commerce_labour_paise, settings.commerce_currency)
     app.state.razorpay = build_gateway(settings)
-    # Hosted MCP client (Step 12 Task 4): the agentic copilot path. None unless SF_MCP_* + the
-    # one-time refresh token are armed, so a keyless boot and tests are unaffected. (/copilot/tools)
+    # Hosted MCP clients for the agentic admin copilot (Step 12 Task 4 + Step 14). SF: None unless
+    # SF_MCP_* + the one-time refresh token are armed. E-com: derived from ECOM_API_URL (+/api/mcp)
+    # unless ECOM_MCP_URL overrides. Both None on a keyless boot, so tests are unaffected.
     app.state.mcp = build_mcp_client(settings)
+    app.state.ecom_mcp = build_ecom_mcp_client(settings)
     # The Toolbox is the controlled MCP-shaped surface over the fakes; the graph only ever calls
     # tools through it. Swapping in a real MCP client later touches only this line.
     app.state.toolbox = build_toolbox(
