@@ -598,11 +598,16 @@ curl -s -X POST http://localhost:8000/copilot/chat -H 'content-type: application
   over 64 chars, so the loop aliases them and maps back when calling (the trace shows the real name).
 - **The loop self-corrects:** if Groq calls a tool with the wrong args, the MCP validation error is
   fed back and the model retries — proven live (it fixed `part_number` → `partNo` on its own).
-- ⚠ **SF refresh-token rotation:** some ECAs issue a NEW refresh token on every refresh and
-  invalidate the old one. The client keeps the rotated token in-memory, but a **process restart**
-  reads the original from `.env` — if that one was already rotated away, re-run
-  `uv run python -m app.mcp.login` to mint a fresh `SF_MCP_REFRESH_TOKEN`. (E-com has no auth, so
-  it's never affected.)
+- ⚠ **SF refresh-token rotation (handled, but needs one fresh token to seed):** the SF ECA forces
+  rotation ("Enable Refresh Token Rotation" is locked ON — can't disable without a Support case), so
+  every refresh mints a new token and kills the old one. We **persist** the rotated token to the
+  `app_secrets` table (`app/db/secrets.py`): the client flags a rotation, the copilot route saves it,
+  and **boot restores the latest from the DB** — so restarts/redeploys self-heal. The `.env` /
+  `SF_MCP_REFRESH_TOKEN` is only needed to seed the **first** call after a fresh deploy; if SF ever
+  goes dead (e.g. DB reset, or no call ever succeeded), re-mint with `uv run python -m app.mcp.login`
+  and update the env, then one successful call re-persists it. (E-com has no auth — never affected.)
+- **Resilience:** a dead/unarmed source (e.g. SF token down) no longer 500s the copilot — it's
+  skipped and listed in the reply's `sourcesUnavailable`; the working sources still answer.
 
 ## 3i. E-com inventory service: the separate stock source + MCP (build step 13)
 

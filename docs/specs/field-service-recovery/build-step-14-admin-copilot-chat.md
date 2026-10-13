@@ -74,6 +74,24 @@ Files: `app/mcp/client.py` (session + `EcomMcpClient` + `build_ecom_mcp_client`)
   re-login to re-arm SF (e-com unaffected — no auth).
 - Backend: `uv run pytest -q` → 112 passed; `uv run ruff check .` clean. Panel `pnpm build` passes.
 
+**2026-10-13 (later) — live debugging on Render + two follow-up fixes.**
+- Deployed to Render; **e-com chat works end-to-end** there. Found + fixed real bugs under live fire:
+  1. **SDK field rename** — `mcp` 2.3.0 exposes the tool schema as `input_schema` (alias `inputSchema`);
+     our `getattr(t, "inputSchema")` blanked every schema, so Groq guessed argument names (e-com
+     tolerated it, SF rejected with `JSON_PARSER_ERROR`). Fixed to read `input_schema` with a fallback.
+  2. **One bad source took down the whole copilot** — a dead SF token made `_gather` raise, 500-ing
+     even e-com. Now each source is gathered independently; a failing one is skipped and reported in
+     `sourcesUnavailable`, the rest still answer. Panel shows an "unavailable" note.
+  3. **Forced refresh-token rotation** — the SF ECA has "Enable Refresh Token Rotation" locked ON
+     ("contact Support" — can't disable). So every refresh mints a new token and kills the old one;
+     the env copy goes stale after the first call, and any restart/redeploy boots with a dead token.
+     **Fix: durable token persistence.** New `app_secrets` table + `app/db/secrets.py`; the SF client
+     flags a rotation (`pop_rotated_token`), the copilot routes save it, and boot restores the latest
+     from the DB (`set_refresh_token`) instead of the stale env value. The env token is only needed
+     for the very first call after this lands; the DB self-heals every restart thereafter.
+- 115 tests green, ruff clean. User action: re-mint once (`python -m app.mcp.login`), put it in Render
+  env, deploy — the first call persists it and it survives restarts from then on.
+
 ## 7. Explanation
 
 ### What changed
