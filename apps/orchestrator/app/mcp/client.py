@@ -78,8 +78,11 @@ class _McpReach:
         JSON-Schema the LLM must fill to call them (inputSchema)."""
         async with _open_session(self._server_url, self._headers()) as session:
             result = await session.list_tools()
+            # SDK 2.3.0 renamed the attribute to `input_schema` (wire alias `inputSchema`); keep the
+            # old name as a fallback so an SDK up/downgrade can't silently blank the schema again.
             return [{"name": t.name, "description": t.description or "",
-                     "inputSchema": getattr(t, "inputSchema", None) or {}} for t in result.tools]
+                     "inputSchema": getattr(t, "input_schema", None)
+                     or getattr(t, "inputSchema", None) or {}} for t in result.tools]
 
     async def call_tool(self, name: str, arguments: dict[str, Any]) -> Any:
         """Run one named tool and return its content blocks (copilot decides name + arguments)."""
