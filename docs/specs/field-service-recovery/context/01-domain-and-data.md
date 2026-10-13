@@ -50,7 +50,9 @@ Ignore the rest of the (large) Field Service model; this is our working set.
 > this is a deliberate design choice, not a capability gap — it matches the real-world shape where
 > stock lives in a commerce/ERP system, and it matches the code, where [`inventory.py`] is already a
 > seam separate from [`salesforce.py`]. The e-com build (admin dashboard, no customer storefront) is
-> a real Node/Postgres service, swapped in behind the `InventoryTools` seam. Stack/host TBD.
+> now a real **Next.js + Supabase** service, **live on Vercel** (`field-flow-ai.vercel.app` — 86 parts
+> seeded, with its own MCP server), swapped in behind the `InventoryTools` seam. The orchestrator
+> reads/reserves over HTTP; blank `ECOM_API_URL` falls back to `FakeInventory` for offline tests.
 
 | Concept (in the e-com source) | Role |
 |--------|------|
@@ -116,5 +118,6 @@ e-com (product + stock)    ──┘                          │
 
 ---
 
-*Last updated 2026-10-10 — Decision A: inventory moved to a separate e-com source (image + price +
-stock); Salesforce owns the service domain only.*
+*Last updated 2026-10-13 — Decision A: inventory moved to a separate e-com source (image + price +
+stock); Salesforce owns the service domain only. The e-com service is now live on Vercel
+(Next.js + Supabase).*

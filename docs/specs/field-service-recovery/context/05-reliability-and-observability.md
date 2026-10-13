@@ -1,8 +1,9 @@
 # Context: Reliability & Observability
 
 > **Living doc.** The layer that makes FieldFlow AI credible as production, not a demo. The
-> Vonage team will care about this more than another pretty card. *(Spine: RabbitMQ + DLQ +
-> idempotency are built; Logfire + the failure demos are planned next.)*
+> Vonage team will care about this more than another pretty card. *(Built: RabbitMQ + DLQ +
+> idempotency, all six failure demos (Step 7), Logfire tracing wired and live on Render, and a
+> simple reconciliation pass.)*
 
 ## The one rule
 
@@ -104,4 +105,5 @@ a single case is followed end to end — the god-eye view.
 
 ---
 
-*Last updated 2026-10-07 — kept in sync with the code as it lands.*
+*Last updated 2026-10-13 — the six failure demos are built (Step 7); Logfire is wired and live on
+Render; a simple reconciliation pass (`GET /reconcile`) is shipped.*

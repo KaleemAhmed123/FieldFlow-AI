@@ -3,6 +3,11 @@
 > **Living doc.** The customer-facing layer — and the whole reason Vonage cares. RCS is the
 > **control plane**, not a notification channel. Rich version:
 > [`../diagrams/02-customer-journey.excalidraw`](../diagrams/02-customer-journey.excalidraw).
+>
+> **Status:** the RCS send + inbound/status webhooks are **real and live-verified on an Android device
+> (2026-10-09)** — a real carousel landed on the phone and the tap resumed the case. The photo-OCR, the
+> Share-Location ETA calc, and the PDF report are POC stand-ins (labelled as such in the decision
+> trace); the RCS primitives that carry them are real.
 
 ## The one rule
 
@@ -72,4 +77,5 @@ Then stage 13's failure demos (see [`05-reliability-and-observability.md`](05-re
 
 ---
 
-*Last updated 2026-10-07 — kept in sync with the code as it lands.*
+*Last updated 2026-10-13 — RCS send + webhooks live-verified on a real Android (Step 9b); the rich
+card (AI body, action chips, confirmation, photo, PDF) is built (Phase 2).*

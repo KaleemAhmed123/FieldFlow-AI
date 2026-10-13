@@ -1,0 +1,4 @@
+# The Excalidraw sources are large JSON and are regenerated from gen_diagrams.py.
+# We keep them out of git and commit the rendered PNGs instead (viewable on GitHub,
+# tiny diffs). Edit a diagram by editing the script and re-running it.
+*.excalidraw

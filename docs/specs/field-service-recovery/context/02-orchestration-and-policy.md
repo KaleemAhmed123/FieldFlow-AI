@@ -34,9 +34,10 @@ LangGraph already is.
 
 ## The graph (built in Step 1)
 
-> This flow is **built and tested** (mock-first) as of 2026-10-07 — see
-> [`../build-step-1.md`](../build-step-1.md). The LLM proposer, RAG and real tools are still mocked;
-> the orchestration, policy and interrupt/resume are real.
+> This flow is **built, tested, and live** — see [`../build-step-1.md`](../build-step-1.md). The
+> orchestration, policy and interrupt/resume were real from day one; the **LLM proposer and RAG are
+> now live too** (Groq `openai/gpt-oss-120b` → Gemini fallback → deterministic; Supabase pgvector).
+> Salesforce reads/reschedule run live over Apex REST (`FakeSalesforce` is the offline default).
 
 ```
 appointment.at_risk
@@ -154,4 +155,5 @@ crashing. See [`../durable-checkpointer.md`](../durable-checkpointer.md).
 
 ---
 
-*Last updated 2026-10-08 — decision core built in Step 1; nodes call the Toolbox as of Step 2.*
+*Last updated 2026-10-13 — decision core built in Step 1; nodes call the Toolbox (Step 2); the LLM
+proposer + RAG are now live (Steps 5/4); the Postgres checkpointer runs live on Render.*

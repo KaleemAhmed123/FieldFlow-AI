@@ -71,10 +71,12 @@ the Daikin XYZ-492 service manual and warranty policy v4."*
 > - **Agentic copilot** (admin chat): a real **MCP client** over **SF Hosted MCP** + the **e-com MCP
 >   server**. Reads flow freely; any **write stays human-confirmed** (never an unsupervised LLM mutation).
 >
-> **Prior build state (unchanged):** the read/action surface is live as an in-process `Toolbox`
-> (`app/tools/registry.py`) over the fakes — granular reads, `inventory.reserve` / `reschedule.confirm`
-> as ladder-running action tools, real `toolsUsed`, `GET /tools`. `knowledge.*`, `workorder.close`,
-> `reschedule.propose` are named seams, not built.
+> **Build state (2026-10-13):** the read/action surface runs as an in-process `Toolbox`
+> (`app/tools/registry.py`), now backed by **live adapters** — Salesforce reads/reschedule over Apex
+> REST, inventory over the live e-com HTTP API (fakes stay the offline default). The **e-com MCP
+> server is live** (Vercel `POST /api/mcp` → 200) and the **admin copilot** MCP client + 8 read-only
+> Salesforce Apex tools are **built mock-first** (SF Hosted MCP live arming is deferred).
+> `knowledge.*`, `workorder.close`, `reschedule.propose` remain named seams.
 >
 > **Commerce tools built in Step 6 (2026-10-08, mock-first) — see [`../build-step-6.md`](../build-step-6.md).**
 > `commerce.create_quote`, `commerce.create_order`, `commerce.create_payment_link`,
@@ -85,10 +87,10 @@ the Daikin XYZ-492 service manual and warranty policy v4."*
 ### What it solves
 
 Instead of stuffing 50 raw APIs into a prompt, we expose business systems as a **small, controlled
-tool surface**. Salesforce ships **Hosted MCP servers** free in Developer Edition (we use that for
-SF reads, per the 2026-10-10 decision above); the **e-com inventory** gets its own small MCP server.
-The deterministic pipeline reasons over the in-process Toolbox; the **admin copilot** is the real MCP
-client over these servers.
+tool surface**. The **deterministic pipeline** reasons over the in-process Toolbox (Salesforce via
+Apex REST, inventory via the e-com HTTP API). The **admin copilot** is the real MCP client: Salesforce
+ships **Hosted MCP servers** free in Developer Edition (for the copilot's SF reads), and the **e-com
+inventory** runs its own small MCP server (live on Vercel).
 
 ### The split that matters: read vs action
 
@@ -148,5 +150,6 @@ action tool.
 
 ---
 
-*Last updated 2026-10-08 — Tools (MCP) surface built mock-first in Step 2; RAG live (Step 4);
-commerce.* action tools built mock-first (Step 6).*
+*Last updated 2026-10-13 — Toolbox surface live over real adapters (Step 2); RAG live (Step 4);
+commerce.* action tools built (Step 6); e-com MCP server live + admin copilot built mock-first
+(Steps 12/13).*

@@ -19,9 +19,10 @@
    is bounded to one decision / one retrieval / one response per step.
 7. **Fake everything.** No real customer data in the POC — removes privacy/compliance concerns.
 8. **Speed over production-grade complexity.** This is a POC to deliver *fast*. Deliberately cut
-   production complexity when it isn't core to the demo story — e.g. skip inbound webhooks
-   (simulate events via `/sim`), prefer managed free tiers over self-hosting, defer alembic/auth/
-   dashboards. Add the hard parts only where they *are* the story (idempotency, policy, DLQ).
+   production complexity when it isn't core to the demo story — e.g. keep `/sim/*` as an offline
+   twin of the real webhooks (so tests/demos need no device), prefer managed free tiers over
+   self-hosting, defer alembic/auth. Add the hard parts only where they *are* the story (idempotency,
+   policy, DLQ, decision trace, observability).
 
 ## Decisions already made
 
@@ -41,8 +42,12 @@
 | **Comprehensive, UI-rich Demo Control Panel** | The strongest live-demo surface for manager/Vonage | A minimal/scripted panel |
 | **Managed free tiers** (Supabase DB, CloudAMQP queue, Groq/Gemini LLM) | Ship faster, ₹0, no infra to run or babysit | Self-hosting via local Docker |
 | **LLM = both providers behind one switch** (`LLM_PROVIDER`) | Benchmark Groq vs Gemini free; keep the code simple | Committing to one provider now |
-| **Inbound webhooks skipped** | POC speed — we fire events via `/sim`; no tunnel/host needed | Wiring Vonage/Razorpay inbound + a public URL |
+| ~~**Inbound webhooks skipped**~~ *(superseded 2026-10-09)* | Was a POC-speed call; **reversed** — Vonage RCS inbound/status are now real webhooks and the SF trigger is a real HTTP callout (orchestrator is public on Render) | — |
 | **Logfire for observability** (god-eye live tracing) | OTel-based, fits Python/FastAPI/Pydantic with almost no glue; one trace per case | Grafana-only dashboards · LangSmith (LLM-only) |
+| **Live SF trigger = Apex record-trigger → HTTP callout** (2026-10-12) | The orchestrator is already public on Render, so a simple HTTP callout beats standing up a gRPC subscriber | Salesforce Pub/Sub API gRPC stream (built as a seam, **deferred as debt**) |
+| **E-com inventory = Next.js + Supabase on Vercel** (2026-10-12) | Fast managed deploy, carries its own MCP server, matches the separate-source decision; ₹0 | A Node/Express service on another host · folding stock back into Salesforce |
+| **Deploy to managed cloud** — orchestrator on **Render**, e-com on **Vercel** (2026-10-12) | A public, always-on demo surface the manager/Vonage can hit — no laptop or tunnel needed | Local-only / ngrok-tunnelled demo |
+| **SF Hosted MCP live arming deferred as debt** (2026-10-12) | Copilot + 8 Apex tools are built mock-first; wiring the live Hosted MCP server + ECA login isn't on the critical demo path | Blocking the milestone on the full live MCP handshake |
 
 ## What we deliberately will NOT build
 
@@ -61,7 +66,7 @@ complex billing engine · real production payments.
 | O1 | LLM provider / model | **DECIDED + BUILT (Step 5)** — fixed fallback ladder **Groq `openai/gpt-oss-120b` → Gemini `gemini-flash-latest` → deterministic** (not a switch; a provider is live if its key is set). Confidence is **evidence-weighted** (5 factors; LLM clamped so it can only lower, never inflate) with a **risk-tier floor** (`ALWAYS_HUMAN_REASONS`) — see [`context/02`](02-orchestration-and-policy.md). Free-tier model ids drift — verify per account. | — |
 | O2 | Repo shape | **DECIDED** — monorepo: orchestrator (Python, **commerce as a module**) · control-panel (React) · contract package · infra. Scaffold a **thin spine first** (walking skeleton), then thicken. | — |
 | O3 | How much of the demo control panel is real vs scripted | **DECIDED** — comprehensive, UI-rich; real state, real triggers; no faked telemetry | — |
-| O4 | Reconciliation depth for the DLQ demo | Enough to show replay + resolve, not a full engine | P4 |
+| O4 | Reconciliation depth for the DLQ demo | **DECIDED + SHIPPED** — a simple pass: `GET /reconcile` flags non-terminal cases stuck past a threshold; DLQ peek + replay cover the recovery demo. Not a full engine. | — |
 | O5 | Backend language | **DECIDED** — **Python** for both backends (orchestrator + commerce via FastAPI); **React** for the control panel | — |
 
 Decisions get appended here as they're made (dated), never rewritten — same discipline as the
@@ -82,4 +87,6 @@ Not "AI chatbot using RCS." Not "Salesforce + MCP demo." Not "RCS rich-card demo
 
 ---
 
-*Last updated 2026-10-07 — kept in sync with the code as it lands.*
+*Last updated 2026-10-13 — added the cloud-deploy, Apex-HTTP-trigger, e-com-on-Vercel and
+Hosted-MCP-deferred decisions; marked "inbound webhooks skipped" superseded; O4 (reconciliation)
+shipped.*

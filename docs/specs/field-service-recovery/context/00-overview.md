@@ -1,14 +1,35 @@
 # Context: System Overview
 
-> **Living doc.** The shared mental model of FieldFlow AI — for the team and anyone new reading
-> the codebase. It describes the whole target system. Built today: the walking-skeleton spine
-> **plus the decision core** (real policy engine + full LangGraph flow with interrupt/resume +
-> failure modes NFR-4/5/6, all mock-first — see [`../build-step-1.md`](../build-step-1.md)). The
-> deeper layers (real tools, RAG, LLM, commerce) are planned. See [`../scaffold.md`](../scaffold.md)
-> for exactly what runs now vs what's next.
+> **Living doc.** The shared mental model of FieldFlow AI — written so an AI agent gets the complete
+> picture *and* a new teammate or manager can follow what this is and why it's hard. It describes the
+> whole system, and the whole system is **built and running live**: the orchestrator is deployed on
+> Render, the e-com inventory service on Vercel, and the full AI pipeline (RAG → LLM → policy → RCS)
+> fires end-to-end — including a real Rich-messaging card delivered to a real Android phone. See
+> [`../../../../playbook.md`](../../../../playbook.md) for every command and the exact build status;
+> [`../scaffold.md`](../scaffold.md) is the original spine plan (kept for history).
 >
 > Requirements live in [`../srs.md`](../srs.md). Risks in [`../risks.md`](../risks.md). Who builds
 > what in [`../roles.md`](../roles.md). Diagrams in [`../diagrams/`](../diagrams/).
+
+## In plain words (read this first)
+
+**The pain it kills.** In home-appliance repair, booked appointments go wrong all the time — the
+technician runs late, the needed part isn't on the van, the unit is more broken than booked. Today a
+human agent scrambles to recover each one: phone calls, SMS, checking stock, rebooking, chasing a
+payment. It is slow, it drops cases, and it costs money on every exception. **FieldFlow AI runs that
+whole recovery automatically**, and lets the customer fix everything from inside one chat thread —
+pick a new slot, share location, photograph the unit, approve a quote, pay — with no app and no phone
+call.
+
+**Where the AI is — and where it deliberately isn't** (this is the heart of the system):
+- The **AI reads the whole situation** (customer, asset, warranty, technician, live stock, and the
+  service manuals via RAG) and **proposes** what to do plus how to explain it to the customer.
+- The AI **never changes anything itself.** A deterministic **policy engine** — plain, auditable
+  code, no model — decides what is actually *allowed*, and a **human approves** anything risky or
+  low-confidence.
+- So the clever part (the AI) is fenced in by the safe part (the policy + the human gate). That
+  fence is what makes an AI system trustworthy enough to touch real operations and real money. It is
+  the one idea the rest of this doc hangs on.
 
 ## Product in one paragraph
 
@@ -46,8 +67,13 @@ If you remember only that sentence, you can predict where any new feature belong
 
 ## Architecture
 
-See [`../diagrams/01-system-architecture.excalidraw`](../diagrams/01-system-architecture.excalidraw)
-for the rich version. In text:
+Rich diagrams live in [`../diagrams/`](../diagrams/) (see its
+[`README`](../diagrams/README.md) for the full set). The most useful:
+**[`01-system-architecture`](../diagrams/01-system-architecture.excalidraw)** (this, drawn),
+**[`05-ai-decision-pipeline`](../diagrams/05-ai-decision-pipeline.excalidraw)** (where the AI is and
+how it's bounded), **[`06-mcp-two-modes`](../diagrams/06-mcp-two-modes.excalidraw)** (deterministic
+vs agentic tool use), and **[`08-deployment-topology`](../diagrams/08-deployment-topology.excalidraw)**
+(what runs where). In text:
 
 ```
 CUSTOMER (Android · Google Messages · RCS)
@@ -74,13 +100,15 @@ VONAGE Messages API (RCS send + real inbound/status webhooks, 9b)  ·  FastAPI i
 ```
 
 - **RabbitMQ** carries every event so nothing is lost under failure. **LangGraph** holds the
-  long-running case state and pauses for the customer. For the POC, events are fired via `/sim`;
-  the **Salesforce** inbound event is simulated via `/sim` (see [`../scaffold.md`](../scaffold.md)).
-  **Vonage RCS inbound (customer taps) + status callbacks are real webhooks** — built in
-  [`../build-step-9b.md`](../build-step-9b.md); `/sim/*` stays as the offline twin. (Razorpay payment
-  stays a `/sim/payment` poll — no Razorpay webhook.)
-- **Salesforce Pub/Sub API** (its event stream) is the intended inbound trigger — react to
-  changes, don't poll. *Simulated via `/sim` in the POC.*
+  long-running case state and pauses for the customer. `/sim/*` fires any event offline (tests, demos).
+  **Vonage RCS inbound (customer taps) + status callbacks are real webhooks** — built and
+  **live-verified** in [`../build-step-9b.md`](../build-step-9b.md); `/sim/*` stays as the offline
+  twin. (Razorpay payment stays a `/sim/payment` poll — no Razorpay webhook.)
+- **The live Salesforce trigger** is an **Apex record-trigger → HTTP callout** to the orchestrator's
+  `/webhooks/sf/at-risk` endpoint. Because the orchestrator is already public on Render, no tunnel or
+  gRPC stream is needed. The heavier **Salesforce Pub/Sub API** subscriber (gRPC event stream) is
+  built as a seam but **deferred as debt** — the HTTP callout is simpler and was chosen as the real
+  path (decision 2026-10-12).
 
 ## The 7 layers (and why each earns its place)
 
@@ -106,29 +134,34 @@ layer can't answer "why am I here" in one line, it's cut (risk R13).
 >   consumed by a real MCP client (the copilot, and the orchestrator's read path). **Guardrail:** the
 >   automated recovery pipeline keeps its policy ladder — MCP never fires a mutation unsupervised;
 >   copilot writes stay human-confirmed. See [`03-knowledge-and-tools.md`](03-knowledge-and-tools.md) §B.
-> - **Layer 7 Logfire** is being **properly wired** as the god-eye view (today it's only a config
->   placeholder; real observability is structlog + Prometheus). **Reconciliation** ships as a simple
->   pass (ponytail). Spec: [`../build-step-12-real-mcp-and-observability.md`](../build-step-12-real-mcp-and-observability.md).
+> - **Layer 7 Logfire** is wired as the god-eye view (one `logfire.configure()` + auto-instrumentation).
+>   **Reconciliation** ships as a simple pass (ponytail). Spec: [`../build-step-12-real-mcp-and-observability.md`](../build-step-12-real-mcp-and-observability.md).
+>
+> **Status (live-verified 2026-10-13):** the **e-com MCP server is live** (Vercel, `POST /api/mcp`
+> → 200); the **SF Hosted MCP server + admin-copilot client are built mock-first** (8 read-only Apex
+> tools deployed; live arming of the Hosted MCP server is gated/deferred). **Logfire is live on
+> Render** (deps all green), and the simple reconciliation pass is shipped (`GET /reconcile`). The
+> deterministic recovery pipeline's Salesforce reads/reschedule run over **Apex REST**, not MCP.
 
 ## Component → where it will live
 
-> The spine is scaffolded. This maps ownership across the full system.
+> The system is built and deployed. This maps ownership and current state across it.
 
-| Component | Owner | Notes |
-|-----------|-------|-------|
-| Vonage adapter (send/receive/failover/capability) | You | Mocked today (FakeVonage); real once RCS access clears. |
-| Event intake (`/sim`) + RabbitMQ topology | You | Correlation id stamped here. Salesforce inbound event simulated via `/sim`; **Vonage RCS inbound/status are real webhooks (9b)**. |
-| LangGraph graph + Policy Engine | You | The decision core. |
-| RAG index + retrieval (LlamaIndex/pgvector) | You | Knowledge layer. |
-| MCP client | You | How the graph calls tools. |
-| MCP servers over Salesforce | You + SF Dev | **Co-owned** — you want hands-on here. |
-| Salesforce Field Service + Pub/Sub events | SF Dev | Service domain (appointment/asset/customer/technician/warranty) + the at-risk event source. |
-| E-com inventory service (products + stock + admin dashboard) | You | **Separate source (Decision A)** — owns product image + price + stock. Real Node/Postgres service behind the `InventoryTools` seam; admin dashboard, no customer storefront. Stack/host TBD. |
-| Service-Commerce (parts/quotes/orders/pay/refund) | You | A module **inside** the orchestrator (Python), not a separate app. **Built mock-first (Step 6):** price-book authority + `FakeRazorpay` behind a `PaymentGateway` seam; quote → Approve & Pay → capture, idempotent (no double-charge). Real Razorpay Test-Mode swaps in at the gated live step. |
-| Razorpay Test-Mode integration | You | Open-URL/webview to a hosted page. |
-| Observability (Logfire traces + Prometheus metrics) | You | God-eye view of every request and case. |
-| Demo control panel | You | Live failure triggers for the showcase. |
-| Admin copilot (panel chat) | You | **New (2026-10-10):** an MCP client — an LLM chat over SF Hosted MCP + the e-com MCP server, answering admins' open-ended queries. Reads freely; writes are human-confirmed. The agentic use case that justifies real MCP. |
+| Component | Owner | State / notes |
+|-----------|-------|---------------|
+| Vonage adapter (send/receive/failover/capability) | You | `FakeVonage` default; real `VonageMessagesClient` built and **live-fired to a real Android (2026-10-09)**. Only the billed live send needs arming. |
+| Event intake + RabbitMQ topology | You | Correlation id stamped here. **Live SF trigger = Apex → HTTP callout to `/webhooks/sf/at-risk`**; **Vonage RCS inbound/status are real webhooks (9b)**; `/sim/*` is the offline twin. |
+| LangGraph graph + Policy Engine | You | The decision core — built, with real interrupt/resume + NFR-4/5/6; Postgres checkpointer live on Render. |
+| RAG index + retrieval (LlamaIndex/pgvector) | You | **Live** (Supabase pgvector, 209 chunks, Jina embed+rerank). Grounds every decision. |
+| MCP client | You | Real MCP client built for the **admin copilot** path; the deterministic pipeline uses an in-process Toolbox + Apex REST. |
+| MCP servers over Salesforce | You + SF Dev | SF Hosted MCP + 8 read-only Apex tools **built mock-first + deployed**; live arming **deferred**. Deterministic reads run over **Apex REST**, live. |
+| Salesforce Field Service + at-risk trigger | SF Dev | Service domain (appointment/asset/customer/technician/warranty). Live trigger = Apex record-trigger → HTTP callout; gRPC Pub/Sub deferred. |
+| E-com inventory service (products + stock + admin dashboard) | You | **Separate source (Decision A)** — owns product image + price + stock. **Next.js + Supabase, live on Vercel** (`field-flow-ai.vercel.app`), 86 parts seeded, own MCP server live; admin dashboard, no storefront. |
+| Service-Commerce (parts/quotes/orders/pay/refund) | You | A module **inside** the orchestrator (Python). Built (Step 6): price-book authority + payment gateway behind a seam; quote → Approve & Pay → capture, idempotent (no double-charge). Real Razorpay **Test-Mode** built; only the one live Test fire is gated. |
+| Razorpay Test-Mode integration | You | Open-URL/webview to a hosted page; real `RazorpayGateway` built + poll-confirm. |
+| Observability (Logfire traces + Prometheus metrics) | You | Logfire **wired and live on Render** — the god-eye trace of every request and case. |
+| Demo control panel | You | React panel; live failure triggers for the showcase. |
+| Admin copilot (panel chat) | You | An MCP client — an LLM chat over SF Hosted MCP + the e-com MCP server, answering admins' open-ended queries. **Built mock-first** (8 read-only tools); reads freely, writes human-confirmed. The agentic use case that justifies real MCP. |
 
 ## Glossary
 
@@ -166,5 +199,7 @@ layer can't answer "why am I here" in one line, it's cut (risk R13).
 
 ---
 
-*Last updated 2026-10-10 — Decision A (inventory = separate e-com source) + Step 9c (the at-risk
-flow triggered by a real Salesforce Platform Event, mock-first).*
+*Last updated 2026-10-13 — refreshed to match the live system: orchestrator on Render + e-com on
+Vercel (both live-verified), full AI pipeline (RAG + LLM) live, Vonage RCS live-fired, failure demos
++ Logfire shipped, e-com MCP live, admin copilot built mock-first, and the live SF trigger switched to
+an Apex HTTP callout (gRPC Pub/Sub deferred).*

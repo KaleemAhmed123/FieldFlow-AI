@@ -1,8 +1,15 @@
 # FieldFlow AI — Project Context
 
-> **Living doc.** The shared mental model for FieldFlow AI — written so anyone new can read the
-> codebase. It describes the whole target system; the walking-skeleton spine is built today and
-> the deeper layers are planned. See [`../scaffold.md`](../scaffold.md) for what runs now.
+> **Living doc.** The shared mental model for FieldFlow AI — written so an AI agent gets the complete
+> picture, and a new teammate or manager can follow what it is and why it's hard. **The system is
+> built and running live** — orchestrator on Render, e-com on Vercel, the full AI pipeline fired end
+> to end (including a real RCS card on a real Android). See [`../../../../playbook.md`](../../../../playbook.md)
+> for the exact build status and every command.
+>
+> **What it is, in one line:** when a repair appointment goes wrong (late technician, missing part,
+> more-broken-than-booked unit), an **AI proposes** the fix, **deterministic policy decides** what's
+> actually allowed, a **human approves** the risky calls, and the customer settles everything over
+> **RCS** (rich chat) — new slot, location, photo, quote, payment — with no app and no phone call.
 
 Read in order the first time; jump by topic after.
 
