@@ -92,6 +92,20 @@ Files: `app/mcp/client.py` (session + `EcomMcpClient` + `build_ecom_mcp_client`)
 - 115 tests green, ruff clean. User action: re-mint once (`python -m app.mcp.login`), put it in Render
   env, deploy — the first call persists it and it survives restarts from then on.
 
+**2026-10-13 (later still) — LIVE on Render, then two polish fixes from real use.**
+- Verified the full copilot on Render: e-com `get_stock`, SF `AppointmentHealth` (arg) and SF
+  `StatusCounts` (no-arg) all return real data, `sourcesUnavailable: None` — the token persistence
+  holds across the rotations. The panel **Copilot tab** works end-to-end.
+- **413 on big queries → graceful.** "total items in inventory" made the model call `list_products`
+  (all 86 parts) → the next Groq request was ~11k tokens, over the free tier's **8k tokens/min** →
+  413 → uncaught → **500** → the 500 lacked the CORS header so the browser *blamed CORS*. Fix:
+  `run_copilot` now wraps every Groq call (`_llm_create`/`_LlmError`) and returns a friendly message
+  instead of raising; tool results fed back are capped (`_TOOL_RESULT_CAP`) so one big list can't
+  blow the budget. The copilot never 500s now.
+- **Scrollbars.** The Radix `ScrollArea` used the default `type="hover"`, so scrollbars only appeared
+  on hover and users couldn't tell panes were scrollable. Switched to `type="auto"` + a more visible
+  thumb (global, affects every pane). 116 tests green, ruff clean, panel builds.
+
 ## 7. Explanation
 
 ### What changed

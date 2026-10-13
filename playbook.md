@@ -608,6 +608,12 @@ curl -s -X POST http://localhost:8000/copilot/chat -H 'content-type: application
   and update the env, then one successful call re-persists it. (E-com has no auth — never affected.)
 - **Resilience:** a dead/unarmed source (e.g. SF token down) no longer 500s the copilot — it's
   skipped and listed in the reply's `sourcesUnavailable`; the working sources still answer.
+- ⚠ **Groq free-tier token limit (~8k tokens/min).** A broad query (e.g. "total items in inventory"
+  → `list_products` over all 86 parts) can exceed it. The copilot now **catches that gracefully**
+  (a friendly "ask something narrower" message, never a 500) and **caps each tool result**
+  (`_TOOL_RESULT_CAP` in `app/copilot/chat.py`) fed back to the model. For full-catalog counts,
+  upgrade the Groq tier. (A 500 here also drops the CORS header, so it looks like a CORS error in the
+  browser — it isn't.)
 
 ## 3i. E-com inventory service: the separate stock source + MCP (build step 13)
 
