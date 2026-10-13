@@ -122,6 +122,19 @@ def card_to_rcs(to: str, card: Card, agent_id: str, correlation_id: str) -> dict
                 "postback_data": f"{correlation_id}|pay", "url": card.payUrl,
             }],
         }}
+    if not card.options:
+        # A confirmation (or any card with no slot options): ONE informational card — title + body +
+        # action chips — modelled on the payment card above (which delivers fine). NOT a carousel:
+        # empty carousel ("cards": []) is Vonage 422 "must have at least 2 items", which 500'd the
+        # resume on the real confirmation send. Chips on a card don't need the `description` a text
+        # suggestion does, so the PDF open_url rides here cleanly.
+        single = {"title": card.title[:200]}
+        if card.body:
+            single["text"] = card.body[:2000]
+        suggestions = actions_to_suggestions(card.actions)
+        if suggestions:
+            single["suggestions"] = suggestions
+        return {**base, "message_type": "card", "card": single}
     cards = [{
         "title": o.label[:200],
         "text": " · ".join(p for p in (o.technician, o.note) if p)[:2000],
@@ -172,10 +185,11 @@ class VonageMessagesClient:
 
     def send_card(self, to: str, card: Card) -> dict:
         correlation_id = to  # the call site passes correlationId here; the device is self._to
-        if card.body and card.kind != "payment":
+        if card.body and card.kind != "payment" and card.options:
             # Lead with the AI message as a plain RCS text carrying the action chips (Share Location
-            # / Dial), then the rich slot cards — the natural chat UX. Best-effort: a failed text
-            # never blocks the card.
+            # / Dial), then the rich slot cards — the natural chat UX. Carousel only: a confirmation
+            # is a single card that already carries its own body (card_to_rcs), so no lead text.
+            # Best-effort: a failed text never blocks the card.
             lead = {"from": self._agent_id, "to": self._to, "channel": "rcs",
                     "message_type": "text", "text": card.body[:2000]}
             suggestions = actions_to_suggestions(card.actions)

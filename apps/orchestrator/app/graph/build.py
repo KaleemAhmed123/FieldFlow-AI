@@ -460,7 +460,14 @@ def build_graph(
                    CardAction(type="pdf", label="Service report (PDF)", value=report["url"])]
         card = Card(kind="confirmation", title="You're all set",
                     body=_confirmation_body(archetype, state["context"], slot), actions=actions)
-        sent = vonage.send_card(state["event"]["correlationId"], card)
+        # Best-effort: the reschedule is already committed, so a confirmation-send hiccup must NOT
+        # strand a closed case or 500 the inbound webhook (which loops Vonage retries). The offer
+        # send stays fail-loud; only this terminal nicety is swallowed.
+        try:
+            sent = vonage.send_card(state["event"]["correlationId"], card)
+        except Exception as exc:  # noqa: BLE001 — confirmation is terminal; never block the close
+            log.error("graph.verify.confirmation_send_failed", error=str(exc))
+            sent = {"error": str(exc)}
         decision = {**state.get("decision", {}), "serviceReport": report}
         log.info("graph.verify.confirmation_sent", slot=slot.get("slotId"))
         return {"card": card.model_dump(), "sent": sent, "decision": decision, "status": "VERIFIED"}
