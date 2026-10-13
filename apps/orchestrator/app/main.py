@@ -26,6 +26,7 @@ from app.commerce import router as commerce_router
 from app.commerce.razorpay import build_gateway
 from app.commerce.service import CommerceService
 from app.config import settings
+from app.db.secrets import SF_REFRESH_TOKEN_KEY, load_secret
 from app.db.session import dispose_db, get_sessionmaker, init_db
 from app.events import build_event_source
 from app.graph.build import build_graph
@@ -86,6 +87,12 @@ async def lifespan(app: FastAPI):
     # unless ECOM_MCP_URL overrides. Both None on a keyless boot, so tests are unaffected.
     app.state.mcp = build_mcp_client(settings)
     app.state.ecom_mcp = build_ecom_mcp_client(settings)
+    # The SF ECA forces refresh-token rotation, so the env token goes stale after the first refresh.
+    # Recover the latest rotated token saved by a previous run, so a restart/redeploy self-heals
+    # instead of booting with a dead token (build step 14 — app/db/secrets.py).
+    if app.state.mcp is not None and (saved_rt := await load_secret(SF_REFRESH_TOKEN_KEY)):
+        app.state.mcp.set_refresh_token(saved_rt)
+        log.info("mcp.sf_refresh_token.restored_from_db")
     # The Toolbox is the controlled MCP-shaped surface over the fakes; the graph only ever calls
     # tools through it. Swapping in a real MCP client later touches only this line.
     app.state.toolbox = build_toolbox(

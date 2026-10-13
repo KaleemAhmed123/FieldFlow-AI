@@ -11,6 +11,7 @@ from sqlalchemy import select
 from app.config import settings
 from app.copilot import build_groq_client, run_copilot
 from app.db.models import Case
+from app.db.secrets import SF_REFRESH_TOKEN_KEY, save_secret
 from app.db.session import get_sessionmaker
 from app.health import check_deps
 from app.reconcile import find_lingering
@@ -85,7 +86,15 @@ async def copilot_tools(request: Request) -> dict:
         return {"available": False,
                 "detail": "MCP not armed — set SF_MCP_* + run `python -m app.mcp.login` "
                           "(docs/specs/field-service-recovery/hosted-mcp-setup.md)."}
-    return {"available": True, "tools": await client.list_tools()}
+    tools = await client.list_tools()
+    await _persist_sf_token(client)
+    return {"available": True, "tools": tools}
+
+
+async def _persist_sf_token(sf_client) -> None:  # noqa: ANN001
+    """If the last SF call rotated the refresh token, save the new one so a restart recovers it."""
+    if sf_client is not None and (rt := sf_client.pop_rotated_token()):
+        await save_secret(SF_REFRESH_TOKEN_KEY, rt)
 
 
 class CopilotAsk(BaseModel):
@@ -112,6 +121,7 @@ async def copilot_chat(body: CopilotAsk, request: Request) -> dict:
         body.message, sources=sources,
         groq_client=build_groq_client(settings), model=settings.groq_model,
     )
+    await _persist_sf_token(sf)  # a rotated SF token, if any, must outlive this process
     return {"available": True, **result}
 
 
