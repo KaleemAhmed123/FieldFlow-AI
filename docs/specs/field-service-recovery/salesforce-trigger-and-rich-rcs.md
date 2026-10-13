@@ -185,6 +185,31 @@ Add metadata only when a scenario needs it (no speculative objects/fields).
   self-check green. Playbook §3g-b added. Endpoint path is `/webhooks/sf/at-risk` (not `/hooks`) —
   lazy reuse of the webhooks router. Next: step 3 (fields + Named Credential + trigger/classes).
 
+- **2026-10-13 (later)** — **First end-to-end SF → RCS debug: isolated the chain hop by hop, fixed
+  the data + a robustness bug.** Ticking `At_Risk__c` was producing no RCS. Walked the 7 hops using
+  the `@future`'s own async Apex debug line (`FieldFlow at-risk <num> -> <code> <body>`):
+  - **401 `bad secret`** → the `FieldFlow` Named Credential is **legacy** (no Custom Headers section),
+    so it sent no `X-FieldFlow-Secret` at all. POC decision (user, 2026-10-13): **blank `SF_HOOK_SECRET`
+    on Render** to unblock; the secret gate is restored later via a new-style NC + External Credential
+    (debt).
+  - **200 `published:true`** but the case went **FAILED** → the real Salesforce REST reads worked
+    (appointment/customer/asset all 200), but the ticked appointment (`SA-0021`) was a **stray,
+    hand-made record with no AssignedResource** → `resourceId: null` → `get_technician(None)` 404 →
+    `load_context` stored `context["technician"] = None` → the proposer's `context.get("technician",
+    {}).get(...)` crashed on the None (the `{}` default never fires when the key exists) → DLQ.
+  - **Root-cause fix (robustness):** `load_context` now coalesces a missing customer/asset/technician
+    to `{}` ([app/graph/build.py]) — a sparse real-org record degrades (card falls back to "Call
+    support") instead of hard-crashing the whole pipeline into the DLQ. Test
+    `test_missing_technician_still_sends_options` (suite 117 green, ruff clean).
+  - **Clean-slate tooling (user chose "reseed real data everywhere"):** `apps/orchestrator/scripts/
+    reset_state.py` wipes the orchestrator's case history + paused checkpoints + purges the DLQ,
+    **keeping `app_secrets`** (the SF copilot token). Dry-run by default; `--yes` applies. Verified
+    against live Supabase + CloudAMQP (found 28 cases + 19 parked DLQ msgs). The full clean+reseed
+    order (SF `seed_demo_data.py --clean`+reseed → e-com `pnpm seed` → `reset_state.py`) is in
+    **playbook §3l**, with the gotcha that `--clean` won't remove untagged strays like `SA-0021`
+    (delete by hand). Next: user runs the reseed + ticks a FIRE-MENU appointment for the first clean
+    SF → RCS card.
+
 ## 7. Explanation
 
 *(Added when the work lands — the plain-English walkthrough.)*

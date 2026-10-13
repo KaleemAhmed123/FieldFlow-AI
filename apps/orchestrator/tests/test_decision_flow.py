@@ -135,6 +135,26 @@ async def test_happy_path_executes_to_closed(sessionmaker, vonage, graph):
     assert case.decision_trace["serviceReport"]["url"].endswith(".pdf")
 
 
+# Robustness — a real-org appointment with no assigned resource (technician None, as a live SF→RCS
+# fire hit) must NOT crash into the DLQ. load_context coalesces None → {}; the offer still sends.
+async def test_missing_technician_still_sends_options(sessionmaker, salesforce, vonage, graph):
+    salesforce._appointments["SA-NOTECH"] = {
+        "appointmentId": "SA-NOTECH", "customerId": "CON-1", "assetId": "AST-1",
+        "resourceId": None,  # no AssignedResource → get_technician(None) is None
+        "slaWindowMinutes": 120, "caseState": "OPEN",
+    }
+    event = make_event(work_order_id="WO-NOTECH", appointment_id="SA-NOTECH",
+                       reason="technician_delay")
+    async with sessionmaker() as s:
+        await case_service.handle_event(s, event, graph=graph)
+
+    case = await _case(sessionmaker, "WO-NOTECH")
+    assert case.status == "OPTIONS_SENT"  # sent the card despite no technician (not FAILED)
+    assert vonage.sent
+    # with no technician the one-tap call chip falls back to "Call support"
+    assert "Call support" in {a["label"] for a in case.sent_card["card"]["actions"]}
+
+
 async def test_photo_records_simulated_ocr_on_the_trace(sessionmaker, vonage, graph):
     # slice 5: the customer sends a label photo → simulated OCR confirms the model on the trace.
     event = make_event(work_order_id="WO-PHOTO", reason="part_missing")

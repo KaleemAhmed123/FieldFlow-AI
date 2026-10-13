@@ -674,6 +674,47 @@ curl -X POST http://localhost:3000/api/reserve -H 'content-type: application/jso
   admin copilot (build-step-14).
 - Write-up: [`build-step-13-ecom-inventory.md`](docs/specs/field-service-recovery/build-step-13-ecom-inventory.md) §7.
 
+## 3l. Reset to a clean demo slate + reseed everything (the real SF → RCS test)
+
+*When data drifts — a stray half-wired appointment, drained e-com stock, stale cases/DLQ — wipe and
+reseed so EVERY flow runs. `app/data/catalog.json` is the single source of truth; the three seeds
+below all derive from it, so Salesforce + e-com + RAG stay consistent. Run in this order:*
+
+```bash
+# 1) SALESFORCE — clean the demo chain, then reseed 28 fully-wired appointments (each WITH a
+#    technician) and print the FIRE MENU (AppointmentNumber -> model -> warranty -> suggested reason).
+uv run --with simple-salesforce python apps/salesforce-apex/seed_demo_data.py --clean
+uv run --with simple-salesforce python apps/salesforce-apex/seed_demo_data.py
+#    !! --clean removes ONLY FFDemo-tagged records. DELETE any hand-made stray appointment (e.g. an
+#    early SA-00xx with no assigned resource) BY HAND in Salesforce — it isn't cleaned, and an
+#    appointment with no technician is exactly what crashed the first SF->RCS fire.
+
+# 2) E-COM — reset the 86 parts + stock (earlier live fires drain scarce parts to 0).
+cd apps/ecom && pnpm seed && cd ..
+
+# 3) ORCHESTRATOR — wipe case history + paused checkpoints + purge the DLQ. KEEPS app_secrets (the
+#    SF copilot refresh token). Dry-run first (counts only), then --yes to apply.
+cd apps/orchestrator
+uv run python scripts/reset_state.py          # dry run — what it WOULD delete
+uv run python scripts/reset_state.py --yes    # apply
+cd ..
+# 4) RAG is already ingested from the same catalog — no reseed unless you edited catalog.json.
+```
+
+**Then fire the REAL SF trigger (not `/sim`):**
+1. Pick an appointment from the FIRE MENU printed in step 1.
+2. On that ServiceAppointment set **`At_Risk_Reason__c`** to the row's suggested reason (blank
+   defaults to `technician_delay` = a plain reschedule).
+3. Tick **`At_Risk__c`** (false → true) and Save → the `@future` callout fires → orchestrator →
+   graph → a real RCS card lands on `VONAGE_TEST_TO`.
+4. Watch it: `GET /cases` (a new case appears, past `FAILED`) and the async Apex log line
+   `FieldFlow at-risk <num> -> 200 {"published":true,...}`.
+
+> **Robustness (2026-10-13):** a missing technician/customer/asset no longer crashes the pipeline —
+> `load_context` coalesces it to empty, so the card still sends (the call chip falls back to "Call
+> support") instead of dead-lettering. Seeded appointments carry a technician → the full "Call
+> <tech>" card.
+
 ## 4. Scenario → where it's proven
 
 | Scenario | What it shows | How to see it today |

@@ -217,11 +217,16 @@ def build_graph(
         customer = toolbox.call("salesforce.get_customer", customerId=appt["customerId"]).data
         asset = toolbox.call("salesforce.get_asset", assetId=appt["assetId"]).data
         tech = toolbox.call("salesforce.get_technician", resourceId=appt["resourceId"]).data
+        # Coalesce missing related records to {} — a real org record can be sparse (e.g. an
+        # appointment with no assigned resource → technician None). Downstream readers do
+        # `context.get("technician", {})`, which returns the stored None (the key exists), so a bare
+        # None would crash the proposer. {} degrades gracefully instead (card falls back to "Call
+        # support"), rather than hard-crashing the whole pipeline into the DLQ.
         ctx = {
             "appointmentId": appt["appointmentId"],
-            "customer": customer,
-            "asset": asset,
-            "technician": tech,
+            "customer": customer or {},
+            "asset": asset or {},
+            "technician": tech or {},
             "slaWindowMinutes": appt["slaWindowMinutes"],
             "caseState": appt["caseState"],
         }
