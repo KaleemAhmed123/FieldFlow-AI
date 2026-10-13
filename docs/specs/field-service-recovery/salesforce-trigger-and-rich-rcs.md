@@ -222,6 +222,22 @@ Add metadata only when a scenario needs it (no speculative objects/fields).
   asset (WA-220) read from the org, groq proposer (conf 0.97), carousel sent. The SF→RCS pipeline is
   unblocked; the only gap is named-tech cards (needs FS territory setup).
 
+- **2026-10-13 (tap + approve resume fixed — full loop verified live).** After the card delivered,
+  the customer's **tap** and the operator's **Approve** both did nothing — each 500'd the resume with
+  the SAME root: a Vonage card sent with zero cards (`carousel.cards must have at least 2 items`,
+  #1020). Two sources, both tracing back to the missing technician:
+  - **Tap → confirmation:** the confirmation card has no slot options, so `card_to_rcs` built an empty
+    carousel. Fix: a no-option card now maps to a **plain RCS text** (the one shape proven to deliver
+    live), with link actions (PDF/report) inlined in the body; the terminal confirmation send is also
+    best-effort so it can't strand an already-rescheduled case or loop webhook retries.
+  - **Approve → offer:** with no assigned technician (this org has no FS territory/skills), the policy
+    stripped EVERY skill-requiring slot ("technician lacks required skill") → empty offer → empty
+    carousel. Fix: `_removal_reason` now enforces the skill match **only when the technician's skills
+    are known** (`skills and …`) — unknown tech ≠ skill mismatch.
+  - **Verified live** on Render: `asset_complex` fired → AWAITING_APPROVAL → Approve → OPTIONS_SENT
+    with a real 2-slot carousel → reply → reschedule → confirmation delivered → **CLOSED**, no error.
+    Suite 118 green, ruff clean. The SF → RCS → tap/approve → close loop is complete.
+
 ## 7. Explanation
 
 *(Added when the work lands — the plain-English walkthrough.)*
