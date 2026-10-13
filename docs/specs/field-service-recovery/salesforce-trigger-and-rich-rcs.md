@@ -166,6 +166,17 @@ Add metadata only when a scenario needs it (no speculative objects/fields).
 - **2026-10-12** — Spec created after the 4 scoping answers. Research done: real FS jeopardy fields
   (`FSL__InJeopardy__c` + `FSL__InJeopardyReason__c`, reasons Delayed Start/Finish, Due Date
   Approaching, No Response, Rejected by Contractor) and the SRS §7 RCS primitive list captured.
+- **2026-10-13** — **Rich-RCS live-fire bugs fixed (first real SF-triggered send).** Ticking
+  `At_Risk__c` fired the whole pipeline correctly (trigger → `/webhooks/sf/at-risk` → queue → graph);
+  only the real Vonage send failed, so the case landed `FAILED`. Three fixes, all in one change:
+  (A) the rich **action chips** were sent as `type:"action"` (+ a `share_location:true` flag) → Vonage
+  422 "Invalid suggestion `action`" (#1020). `actions_to_suggestions` now emits only Vonage's valid
+  flat chip types — `reply`/`dial`/`open_url`/`share_location` — per the RCS Suggestion Chips docs;
+  `dial` is cleaned to **E.164** (`_e164`) + a required `fallback_url`; calendar/photo have no
+  POC-formable flat chip so they stay panel-only. (A2) the **payment** card chip had the same
+  `type:"action"` bug → now `open_url`. (B) `/webhooks/status` assumed `to` was `{"number":…}` but RCS
+  sends a bare string → 500 retry loop; `status_recipient()` now accepts either. Suite **109 green**
+  (+1), ruff clean. Playbook §3e live-fire table updated. Next: user redeploys Render + re-fires.
 - **2026-10-12** — **Phase 1 steps 1–2 shipped.** (1) `POST /webhooks/sf/at-risk` added to
   `app/webhooks/routes.py` (reuses the existing `/webhooks` router + the tested
   `platform_event_to_at_risk` + the broker) with `SF_HOOK_SECRET` gate; `tests/test_sf_hook.py` 4

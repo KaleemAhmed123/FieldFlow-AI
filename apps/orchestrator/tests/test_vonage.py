@@ -22,7 +22,7 @@ from app.tools.vonage import (
     build_vonage,
     card_to_rcs,
 )
-from app.webhooks.routes import parse_postback, verify_vonage_jwt
+from app.webhooks.routes import parse_postback, status_recipient, verify_vonage_jwt
 from fieldflow_contract import Card, CardAction, SlotOption, make_event
 from sqlalchemy import func, select
 
@@ -47,9 +47,11 @@ def test_carousel_embeds_correlation_slot_version_and_caps_at_four():
 
 
 def test_payment_card_is_open_url_action():
+    # RCS has no "action" suggestion type — the pay chip is an open_url (a `type:"action"` here was
+    # a 422 #1020 waiting on the parts/pay flow).
     card = Card(kind="payment", title="Approve & Pay ₹3,700", payUrl="https://rzp.io/i/x")
     sugg = card_to_rcs("916394493446", card, "agent", "WO-9")["card"]["suggestions"][0]
-    assert sugg["type"] == "action" and sugg["url"] == "https://rzp.io/i/x"
+    assert sugg["type"] == "open_url" and sugg["url"] == "https://rzp.io/i/x"
 
 
 def test_actions_map_to_rcs_suggestions():
@@ -57,10 +59,24 @@ def test_actions_map_to_rcs_suggestions():
         CardAction(type="share_location", label="Share my location"),
         CardAction(type="dial", label="Call Rahul", value="+91-90000-00042"),
         CardAction(type="view", label="View appointment", value="https://x/case"),
+        CardAction(type="calendar", label="Add to calendar", value="TODAY 15:00"),  # omitted
     ])
-    assert chips[0]["share_location"] is True and chips[0]["postback_data"] == "share_location"
-    assert chips[1]["phone_number"] == "+91-90000-00042"      # one-tap dial
-    assert chips[2]["url"] == "https://x/case"
+    # Only Vonage's valid flat chip types — a `type:"action"` is the #1020 422 that bit live.
+    assert all(c["type"] != "action" for c in chips)
+    assert chips[0] == {"type": "share_location", "text": "Share my location",
+                        "postback_data": "share_location"}  # no `share_location:true` flag
+    assert chips[1]["type"] == "dial" and chips[1]["phone_number"] == "+919000000042"  # E.164, no -
+    assert chips[1]["fallback_url"]                                   # dial requires a fallback
+    assert chips[2] == {"type": "open_url", "text": "View appointment",
+                        "postback_data": "view", "url": "https://x/case"}
+    assert len(chips) == 3                                            # calendar has no POC chip
+
+
+def test_status_recipient_accepts_string_and_dict():
+    # Vonage sends the status callback `to` as a bare string on RCS (a dict was assumed → 500 loop).
+    assert status_recipient({"to": "916306026859"}) == "916306026859"
+    assert status_recipient({"to": {"number": "916306026859"}}) == "916306026859"
+    assert status_recipient({}) is None
 
 
 # --- build_vonage arming -------------------------------------------------------------------------

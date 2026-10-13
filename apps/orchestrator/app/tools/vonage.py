@@ -10,6 +10,7 @@ offline dev without a send ever firing by accident.
 
 from __future__ import annotations
 
+import re
 import time
 import uuid
 from pathlib import Path
@@ -23,25 +24,43 @@ log = get_logger("vonage")
 
 MAX_SUGGESTIONS = 4  # Vonage RCS allows at most 4 suggestions per card.
 
+# Vonage's `dial` chip requires a `fallback_url` (opened if the device can't dial); one POC page.
+SUGGESTION_FALLBACK_URL = "https://field-flow-ai.vercel.app"
+
+
+def _e164(phone: str) -> str:
+    """Vonage `dial` needs E.164 — a leading + then digits only. Our seeded numbers carry dashes
+    (`+91-80000-00000`), which Vonage rejects, so strip everything but the digits."""
+    digits = re.sub(r"\D", "", phone or "")
+    return "+" + digits if digits else ""
+
 
 def actions_to_suggestions(actions: list[CardAction]) -> list[dict]:
-    """Map our declarative CardActions → Vonage RCS suggestion chips (slice 2). share_location asks
-    the phone to send GPS, dial opens the dialer, view opens a URL, calendar adds the event.
+    """Map our declarative CardActions → Vonage RCS suggestion chips (slice 2), using ONLY the chip
+    `type`s the RCS channel accepts: `reply` / `dial` / `open_url` / `share_location` (docs: RCS
+    Suggestion Chips). Sending `type: "action"` is a 422 "Invalid suggestion" (#1020) — exactly what
+    bit the first live fire. `text` is capped at 25 (Vonage's limit); `dial` is E.164 + a fallback.
 
-    # ponytail: the exact per-type wire fields are Vonage's to confirm at the gated live fire — this
-    # is the one spot to adjust. The panel (the demo surface) renders the actions from card.actions
-    # directly, so a wire tweak here never affects what's shown on screen.
+    calendar + photo have no flat Vonage chip we can form from POC data (calendar needs RFC3339
+    start/end + title/description; photo is just the customer attaching an image), so they render in
+    the panel but are omitted from the real send rather than 422 it. share_location + dial are the
+    headline "RCS is a control plane" chips and go out for real.
     """
     out: list[dict] = []
-    for a in actions[:MAX_SUGGESTIONS]:
-        chip: dict = {"type": "action", "text": a.label[:25], "postback_data": a.type}
+    for a in actions:
+        if len(out) >= MAX_SUGGESTIONS:
+            break
+        chip = {"text": a.label[:25], "postback_data": a.type}
         if a.type == "share_location":
-            chip["share_location"] = True
+            out.append({"type": "share_location", **chip})
         elif a.type == "dial":
-            chip["phone_number"] = a.value
-        elif a.type in ("view", "pdf"):
-            chip["url"] = a.value
-        out.append(chip)
+            phone = _e164(a.value)
+            if phone:
+                out.append({"type": "dial", **chip, "phone_number": phone,
+                            "fallback_url": SUGGESTION_FALLBACK_URL})
+        elif a.type in ("view", "pdf") and a.value:
+            out.append({"type": "open_url", **chip, "url": a.value})
+        # calendar / photo: no POC-formable flat chip → panel-only (see docstring).
     return out
 
 # RCS requires an image on every carousel card (a text-only card is a 422). This MUST be a static,
@@ -99,7 +118,7 @@ def card_to_rcs(to: str, card: Card, agent_id: str, correlation_id: str) -> dict
         return {**base, "message_type": "card", "card": {
             "title": card.title[:200],
             "suggestions": [{
-                "type": "action", "text": "Approve & Pay",
+                "type": "open_url", "text": "Approve & Pay",
                 "postback_data": f"{correlation_id}|pay", "url": card.payUrl,
             }],
         }}

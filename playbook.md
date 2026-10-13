@@ -386,6 +386,8 @@ actually gets a card delivered and the tap back — each was a real blocker we h
 | `202` but **no card on phone** | number not an allow-listed **test device** | add the number as a test device on the agent; `to` is **digits only, no `+`** |
 | card arrives, **tap never resumes** | Inbound URL not set on the **application** | set Inbound+Status URL on the app (`VONAGE_APPLICATION_ID`), not the agent builder |
 | image area blank | Google RBM fetches/validates media itself and won't render a **dynamic** URL (placehold.co?text=…) | **FIXED** — `_card_media` now returns a **static** image `https://field-flow-ai.vercel.app/card.png` (file `apps/ecom/public/card.png`); static, no query string. Needs an e-com + orchestrator redeploy. Per-model images = A2 (later) |
+| `422 Invalid suggestion \`action\`` (#1020) on the rich-RCS **text** + **payment** card | our action chips used `type:"action"` (+ a `share_location:true` flag), which RCS rejects | **FIXED** (2026-10-13) — `actions_to_suggestions` now emits only the valid flat chip types `reply`/`dial`/`open_url`/`share_location`; payment chip is `open_url`. `dial` needs **E.164** (`+`+digits, no dashes — `_e164()` strips them) **and** a `fallback_url`. calendar/photo have no POC-formable flat chip → panel-only, omitted from the real send |
+| `POST /webhooks/status` → **500** loop (Vonage retries) | the handler read `to` as `{"number":…}`, but RCS sends `to` as a **plain string** | **FIXED** (2026-10-13) — `status_recipient()` accepts a string or a dict |
 | server crashes on boot (Windows) | psycopg3 + ProactorEventLoop | run with `uvicorn --reload` (selector loop only set under the reload subprocess) |
 
 Golden rule we re-learned: **make the failure loud (log the response body + traceback) and read it

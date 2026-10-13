@@ -66,6 +66,14 @@ def parse_postback(data: str) -> dict | None:
     return {"correlationId": parts[0], "slotId": parts[1], "version": int(parts[2])}
 
 
+def status_recipient(data: dict) -> str | None:
+    """The `to` on a delivery-status callback. Vonage sends it as a plain string (the number) on
+    RCS, but as {"number": ...} on some channels — accept either. A bare string was a 500 on the
+    first live fire (`'str' object has no attribute 'get'`)."""
+    to = data.get("to")
+    return to.get("number") if isinstance(to, dict) else to
+
+
 def _bearer(request: Request) -> str:
     header = request.headers.get("authorization", "")
     return header[7:] if header[:7].lower() == "bearer " else ""
@@ -104,7 +112,7 @@ async def status(request: Request) -> Response:
     async with get_sessionmaker()() as session:
         await case_service.record_delivery_status(
             session, request.app.state.vonage, message_uuid=data.get("message_uuid"),
-            status=data.get("status"), to=(data.get("to") or {}).get("number"),
+            status=data.get("status"), to=status_recipient(data),
         )
     return Response(status_code=200)
 
