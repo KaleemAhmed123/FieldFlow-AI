@@ -49,8 +49,10 @@ def test_access_token_cached_until_expiry() -> None:
 
 
 def test_build_is_none_when_unarmed() -> None:
-    # Ids set but no refresh token → still off (the one-time login hasn't run).
-    s = Settings(sf_mcp_server_url=SERVER, sf_mcp_client_id="id", sf_mcp_client_secret="sec")
+    # Ids set but no refresh token → still off (the one-time login hasn't run). Pin the token empty
+    # so a developer's real .env (which may now carry a live SF_MCP_REFRESH_TOKEN) can't arm it.
+    s = Settings(sf_mcp_server_url=SERVER, sf_mcp_client_id="id", sf_mcp_client_secret="sec",
+                 sf_mcp_refresh_token="")
     assert build_mcp_client(s) is None
 
 
