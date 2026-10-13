@@ -122,6 +122,11 @@ class Settings(BaseSettings):
     # SEPARATE Node/Next.js + Supabase service, not Salesforce. Blank → FakeInventory (offline
     # default, every test); set the deployed base URL → RestInventory swaps in behind build_toolbox.
     ecom_api_url: str = ""
+    # The e-com Hosted MCP endpoint for the admin copilot (build step 14). Blank → derived from
+    # ecom_api_url + "/api/mcp" (so it arms wherever the e-com service is already wired); blank both
+    # → no e-com tools (offline default, every test). The e-com MCP is open (no auth) — a POC admin
+    # service.
+    ecom_mcp_url: str = ""
 
     # Observability + the deep dependency-health route (build step 10). logfire_token was previously
     # dropped by extra="ignore"; the health check needs to see if it's configured. The cache TTL

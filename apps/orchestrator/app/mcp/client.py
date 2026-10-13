@@ -1,16 +1,16 @@
-"""A thin MCP client over a Salesforce Hosted MCP server (build step 12 Task 4).
+"""MCP clients over Streamable HTTP — the AGENTIC path for the admin copilot.
 
-The copilot asks this client "what tools are there?" and "run this tool" — the LLM picks; the client
-just carries the call. Two layers, split so the fiddly auth is unit-testable offline and the MCP
-wire call is the one gated-live bit:
+Two sources, one wire protocol:
+  - Salesforce Hosted MCP (OAuth2 + PKCE). No headless client-credentials grant, so the admin runs
+    `python -m app.mcp.login` ONCE to mint a refresh token; this client swaps that refresh token for
+    short-lived access tokens (cached, refetched on expiry) with a plain httpx POST. That
+    exchange is covered by tests via httpx.MockTransport.
+  - E-com Hosted MCP (`/api/mcp`, no auth — a POC admin service). Same Streamable-HTTP session, no
+    bearer.
 
-  - TOKEN (testable offline): Hosted MCP auth is OAuth2 + PKCE, so there is no headless client-
-    credentials grant. The admin runs `python -m app.mcp.login` ONCE to mint a refresh token; this
-    client swaps that refresh token for a short-lived access token (cached, refetched on expiry)
-    with a plain httpx POST. That exchange is covered by tests via httpx.MockTransport.
-  - SESSION (gated live): open a Streamable HTTP MCP session to the server url with the access token
-    as a bearer, then list/call tools through the `mcp` SDK. Lazy-imported so offline imports/tests
-    never need the SDK or the network — verified live against the org, like the Apex reads were.
+The session layer (list/call tools) is shared via `_McpReach`; only the auth headers differ. It is
+lazy-imported so offline imports/tests never need the `mcp` SDK or the network — the wire call is
+the one gated-live bit, verified live against each server.
 """
 
 from __future__ import annotations
@@ -36,7 +36,59 @@ def _default_token_url(server_url: str) -> str:
     return f"{parts.scheme}://{parts.netloc}/services/oauth2/token"
 
 
-class SalesforceMcpClient:
+def _open_session(server_url: str, headers: dict[str, str]):  # noqa: ANN202 — lazy mcp types
+    """Async context manager yielding an initialized MCP ClientSession over Streamable HTTP.
+
+    GATED LIVE: needs the `mcp` SDK + a reachable server. `headers` carries auth (a Bearer for
+    Salesforce, empty for the open e-com server). SDK 2.3.0: `streamable_http_client` (underscored)
+    returns a 2-tuple (read, write); build the http client with the SDK helper so its own httpx fork
+    + MCP timeouts are used.
+    """
+    from mcp import ClientSession
+    from mcp.client.streamable_http import create_mcp_http_client, streamable_http_client
+
+    class _Ctx:
+        async def __aenter__(_self):  # noqa: N805
+            _self._http = create_mcp_http_client(headers=headers or None)
+            _self._transport = streamable_http_client(server_url, http_client=_self._http)
+            read, write = await _self._transport.__aenter__()
+            _self._session = ClientSession(read, write)
+            await _self._session.__aenter__()
+            await _self._session.initialize()
+            return _self._session
+
+        async def __aexit__(_self, *exc):  # noqa: N805
+            await _self._session.__aexit__(*exc)
+            await _self._transport.__aexit__(*exc)
+            await _self._http.aclose()
+
+    return _Ctx()
+
+
+class _McpReach:
+    """Shared read/call surface over Streamable-HTTP MCP. Subclasses supply `_headers()`."""
+
+    _server_url: str
+
+    def _headers(self) -> dict[str, str]:
+        return {}
+
+    async def list_tools(self) -> list[dict[str, Any]]:
+        """Tools the server exposes — name, description (what the LLM routes on), and the
+        JSON-Schema the LLM must fill to call them (inputSchema)."""
+        async with _open_session(self._server_url, self._headers()) as session:
+            result = await session.list_tools()
+            return [{"name": t.name, "description": t.description or "",
+                     "inputSchema": getattr(t, "inputSchema", None) or {}} for t in result.tools]
+
+    async def call_tool(self, name: str, arguments: dict[str, Any]) -> Any:
+        """Run one named tool and return its content blocks (copilot decides name + arguments)."""
+        async with _open_session(self._server_url, self._headers()) as session:
+            result = await session.call_tool(name, arguments)
+            return result.content
+
+
+class SalesforceMcpClient(_McpReach):
     def __init__(
         self, *, server_url: str, client_id: str, client_secret: str, refresh_token: str,
         token_url: str = "", timeout: float = 30.0, http: httpx.Client | None = None,
@@ -70,56 +122,30 @@ class SalesforceMcpClient:
         resp.raise_for_status()
         body = resp.json()
         self._access_token = body["access_token"]
+        # Some ECAs ROTATE the refresh token: each refresh invalidates the prior one and returns a
+        # new one. Keep the new one so a long-running server survives rotation. (A process restart
+        # still needs a fresh `python -m app.mcp.login`, since .env keeps the original — POC limit.)
+        if new_rt := body.get("refresh_token"):
+            self._refresh_token = new_rt
         # Salesforce refresh-grant responses omit expires_in; assume ~2h and lean on the 401 path.
         self._expires_at = time.time() + float(body.get("expires_in", 7200))
         log.info("mcp.access_token_refreshed")
         return self._access_token
 
-    async def _session(self):  # noqa: ANN202 — context manager, mcp types are lazy
-        """Open a Streamable HTTP MCP session with the bearer token. GATED LIVE: needs the `mcp` SDK
-        + the activated Hosted MCP server. Returns an async context manager yielding a session."""
-        import httpx
-        from mcp import ClientSession
-        from mcp.client.streamable_http import streamablehttp_client
+    def _headers(self) -> dict[str, str]:
+        return {"Authorization": f"Bearer {self.access_token()}"}
 
-        token = self.access_token()
 
-        class _Ctx:
-            async def __aenter__(_self):  # noqa: N805
-                _self._http = httpx.AsyncClient(
-                    headers={"Authorization": f"Bearer {token}"},
-                    timeout=httpx.Timeout(self._timeout, read=300.0),
-                )
-                _self._transport = streamablehttp_client(self._server_url, http_client=_self._http)
-                read, write, _ = await _self._transport.__aenter__()
-                _self._session = ClientSession(read, write)
-                await _self._session.__aenter__()
-                await _self._session.initialize()
-                return _self._session
+class EcomMcpClient(_McpReach):
+    """The e-com inventory MCP server (`/api/mcp`). Open (no auth) — POC admin service."""
 
-            async def __aexit__(_self, *exc):  # noqa: N805
-                await _self._session.__aexit__(*exc)
-                await _self._transport.__aexit__(*exc)
-                await _self._http.aclose()
-
-        return _Ctx()
-
-    async def list_tools(self) -> list[dict[str, str]]:
-        """The tools the server exposes — name + description (what the copilot LLM routes on)."""
-        async with await self._session() as session:
-            result = await session.list_tools()
-            return [{"name": t.name, "description": t.description or ""} for t in result.tools]
-
-    async def call_tool(self, name: str, arguments: dict[str, Any]) -> Any:
-        """Run one named tool and return its content (the copilot decides name + arguments)."""
-        async with await self._session() as session:
-            result = await session.call_tool(name, arguments)
-            return result.content
+    def __init__(self, server_url: str) -> None:
+        self._server_url = server_url
 
 
 def build_mcp_client(settings: Any) -> SalesforceMcpClient | None:
-    """The one swap line: a live MCP client when the Hosted-MCP creds + refresh token are armed,
-    else None (offline default — every test, a keyless boot). See hosted-mcp-setup.md."""
+    """The one swap line: a live Salesforce MCP client when the Hosted-MCP creds + refresh token are
+    armed, else None (offline default — every test, a keyless boot). See hosted-mcp-setup.md."""
     if not settings.sf_mcp_armed:
         return None
     log.info("mcp.live", server_url=settings.sf_mcp_server_url)
@@ -128,3 +154,14 @@ def build_mcp_client(settings: Any) -> SalesforceMcpClient | None:
         client_secret=settings.sf_mcp_client_secret, refresh_token=settings.sf_mcp_refresh_token,
         token_url=settings.sf_mcp_token_url,
     )
+
+
+def build_ecom_mcp_client(settings: Any) -> EcomMcpClient | None:
+    """E-com MCP client. Explicit `ECOM_MCP_URL` wins; else derived from `ECOM_API_URL` + `/api/mcp`
+    (so it arms automatically wherever the e-com service is already wired). Blank both → None."""
+    url = getattr(settings, "ecom_mcp_url", "") or (
+        f"{settings.ecom_api_url.rstrip('/')}/api/mcp" if settings.ecom_api_url else "")
+    if not url:
+        return None
+    log.info("mcp.ecom.live", server_url=url)
+    return EcomMcpClient(url)

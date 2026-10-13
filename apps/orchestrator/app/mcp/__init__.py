@@ -6,6 +6,16 @@ tools over a Hosted MCP server and decides which to call. build_mcp_client is th
 (None unless SF_MCP_* creds + the one-time refresh token are armed), like build_vonage.
 """
 
-from app.mcp.client import SalesforceMcpClient, build_mcp_client
+from app.mcp.client import (
+    EcomMcpClient,
+    SalesforceMcpClient,
+    build_ecom_mcp_client,
+    build_mcp_client,
+)
 
-__all__ = ["SalesforceMcpClient", "build_mcp_client"]
+__all__ = [
+    "EcomMcpClient",
+    "SalesforceMcpClient",
+    "build_ecom_mcp_client",
+    "build_mcp_client",
+]
