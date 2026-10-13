@@ -126,3 +126,29 @@ export const fault = (body: { salesforceDown: boolean }) =>
 
 export const replayDlq = () =>
   USE_FIXTURES ? fixtureBackend.replayDlq() : postJSON("/sim/dlq/replay", {});
+
+// ---- Admin copilot (build step 14) -----------------------------------------
+// NL question -> Groq tool-calling over the SF + e-com MCP tools -> grounded answer. `toolsUsed` is
+// the mini decision-trace. Read-only. Needs the live backend + GROQ_API_KEY, so in fixtures mode we
+// return a canned reply (the copilot can't run without the real services).
+export interface CopilotToolCall {
+  name: string;
+  args: Record<string, unknown>;
+  result: string;
+}
+export interface CopilotReply {
+  available: boolean;
+  detail?: string;
+  answer?: string;
+  toolsUsed?: CopilotToolCall[];
+  truncated?: boolean;
+}
+
+export const copilotChat = (message: string): Promise<CopilotReply> =>
+  USE_FIXTURES
+    ? Promise.resolve({
+        available: true,
+        answer: "(fixtures mode) The copilot needs the live backend + GROQ_API_KEY to answer.",
+        toolsUsed: [],
+      })
+    : postJSON<CopilotReply>("/copilot/chat", { message });

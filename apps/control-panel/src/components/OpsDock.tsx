@@ -1,5 +1,6 @@
-import { BarChart3, SlidersHorizontal, Wrench } from "lucide-react";
+import { BarChart3, Bot, SlidersHorizontal, Wrench } from "lucide-react";
 
+import { CopilotChat } from "@/components/CopilotChat";
 import { FailureDeck } from "@/components/FailureDeck";
 import { MetricsStrip } from "@/components/MetricsStrip";
 import { ToolsSurface } from "@/components/ToolsSurface";
@@ -21,6 +22,9 @@ export function OpsDock({ selected }: { selected?: CaseRow }) {
             </TabsTrigger>
             <TabsTrigger value="metrics" className="flex-1">
               <BarChart3 className="mr-1 h-3 w-3" /> Metrics
+            </TabsTrigger>
+            <TabsTrigger value="copilot" className="flex-1">
+              <Bot className="mr-1 h-3 w-3" /> Copilot
             </TabsTrigger>
           </TabsList>
         </div>
@@ -45,6 +49,10 @@ export function OpsDock({ selected }: { selected?: CaseRow }) {
               <MetricsStrip />
             </div>
           </ScrollArea>
+        </TabsContent>
+
+        <TabsContent value="copilot" className="min-h-0 flex-1">
+          <CopilotChat />
         </TabsContent>
       </Tabs>
     </div>
