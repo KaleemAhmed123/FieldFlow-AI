@@ -103,6 +103,25 @@ def test_dead_source_is_skipped_not_fatal() -> None:
     assert [f["function"]["name"] for f in groq.seen[0]["tools"]] == ["get_stock"]
 
 
+class BoomGroq:
+    """A Groq client whose create() always raises — stands in for a 413/429/outage."""
+
+    def __init__(self, exc: Exception) -> None:
+        self._exc = exc
+        self.chat = SimpleNamespace(completions=self)
+
+    def create(self, **kwargs):  # noqa: ANN003, ANN201
+        raise self._exc
+
+
+def test_llm_rate_limit_is_graceful_not_a_500() -> None:
+    # A Groq 413/429 must become a friendly answer, never a 500 (a 500 also drops the CORS header).
+    boom = BoomGroq(RuntimeError("413 rate_limit_exceeded: tokens per minute (TPM): Limit 8000"))
+    out = asyncio.run(run_copilot("total items?", sources={}, groq_client=boom, model="m"))
+    assert "free tier" in out["answer"].lower()
+    assert out["toolsUsed"] == []
+
+
 def test_answers_without_tools_when_none_armed() -> None:
     groq = FakeGroq([_resp("I have no tools to answer that.", None)])
     out = asyncio.run(run_copilot("hi", sources={}, groq_client=groq, model="m"))
