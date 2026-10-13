@@ -712,8 +712,15 @@ cd ..
 
 > **Robustness (2026-10-13):** a missing technician/customer/asset no longer crashes the pipeline —
 > `load_context` coalesces it to empty, so the card still sends (the call chip falls back to "Call
-> support") instead of dead-lettering. Seeded appointments carry a technician → the full "Call
-> <tech>" card.
+> support") instead of dead-lettering. **Verified live** against seeded `SA-0033`: `OPTIONS_SENT`,
+> real customer/asset read from the org, groq proposer, carousel sent.
+>
+> **Seed vs this org's Field Service config (2026-10-13):** `seed_demo_data.py` was hardened for FS
+> validation — a new ServiceAppointment can't be CREATED in Scheduled status (create in default, no
+> status), and assigning a resource needs the SA scheduled + a ServiceTerritoryMember. This org has
+> no territory members, so **technician assignment is best-effort and currently skipped** → every
+> seeded card shows **"Call support"**. For named-tech cards ("Call Rahul"), set up a ServiceTerritory
+> + OperatingHours + ServiceTerritoryMembers, then re-run the seed.
 
 ## 4. Scenario → where it's proven
 

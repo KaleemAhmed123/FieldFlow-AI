@@ -210,6 +210,18 @@ Add metadata only when a scenario needs it (no speculative objects/fields).
     (delete by hand). Next: user runs the reseed + ticks a FIRE-MENU appointment for the first clean
     SF → RCS card.
 
+- **2026-10-13 (reseed + verify done).** Ran the full clean+reseed: SF `--clean` + reseed (28
+  appointments `SA-0031..SA-0058`), e-com `pnpm seed` (86 parts), orchestrator `reset_state.py --yes`
+  (cleared 28 cases + 683 checkpoint rows + 19 DLQ msgs). **`seed_demo_data.py` needed three fixes for
+  this org's Field Service validation:** (1) can't CREATE a ServiceAppointment in Scheduled status →
+  create in default (no status); (2) assigning a resource needs the SA scheduled → set
+  SchedStart/EndTime in a separate update, staggered 3h/case; (3) assignment still needs a
+  ServiceTerritoryMember, which this org lacks → **best-effort assign, skip on failure** (appointments
+  still created; cards fall back to "Call support" via the new guard). **Verified live** by firing
+  `/sim/appointment-at-risk` for `SA-0033` on Render → `OPTIONS_SENT`, real customer (Imran Khan) +
+  asset (WA-220) read from the org, groq proposer (conf 0.97), carousel sent. The SF→RCS pipeline is
+  unblocked; the only gap is named-tech cards (needs FS territory setup).
+
 ## 7. Explanation
 
 *(Added when the work lands — the plain-English walkthrough.)*

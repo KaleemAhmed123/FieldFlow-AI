@@ -30,6 +30,7 @@ from __future__ import annotations
 
 import json
 import sys
+from datetime import datetime, timedelta, timezone
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -171,14 +172,37 @@ def main() -> None:
             wo_id = upsert("WorkOrder", f"Subject = '{esc(subject)}'",
                            {"Subject": subject, "ContactId": con_id, "AssetId": asset_id,
                             "AccountId": acct_id})
+            # NB: Field Service forbids CREATING a ServiceAppointment already in Scheduled/Dispatched
+            # ("New service appointment cannot be created in scheduled or dispatched statuses") — it
+            # must start in the org's default (None). We don't set Status at all; the trigger fires on
+            # the At_Risk__c flip, not on status, so the initial status is irrelevant to the demo.
             sa_id = upsert("ServiceAppointment", f"ParentRecordId = '{wo_id}'",
-                           {"ParentRecordId": wo_id, "Status": "Scheduled"},
+                           {"ParentRecordId": wo_id},
                            create_only=("ParentRecordId",))
+            # Assigning a resource needs the SA to have schedule times (FS validation). Set them in a
+            # SEPARATE update — setting them on CREATE can auto-flip Status to Scheduled, which FS
+            # forbids at insert. Staggered 3h per case so one technician's 2h windows never overlap.
+            start = datetime.now(timezone.utc) + timedelta(days=1, hours=3 * case)
+            sf.ServiceAppointment.update(sa_id, {
+                "SchedStartTime": start.strftime("%Y-%m-%dT%H:%M:%S.000+0000"),
+                "SchedEndTime": (start + timedelta(hours=2)).strftime("%Y-%m-%dT%H:%M:%S.000+0000"),
+            })
             exists = sf.query(f"SELECT Id FROM AssignedResource WHERE ServiceAppointmentId = '{sa_id}' "
                               f"AND ServiceResourceId = '{tech_id}' LIMIT 1")
             if not exists["totalSize"]:
-                sf.AssignedResource.create(
-                    {"ServiceAppointmentId": sa_id, "ServiceResourceId": tech_id})
+                # Best-effort: assigning a resource needs full FS scheduling config (the SA's service
+                # territory + a ServiceTerritoryMember for the resource + operating hours). That varies
+                # per org, so we don't hard-fail the seed on it — the appointment is still created, and
+                # the pipeline's load_context tolerates a missing technician (card -> "Call support").
+                # Set up a ServiceTerritory + members later for the richer "Call <tech>" card.
+                try:
+                    sf.AssignedResource.create(
+                        {"ServiceAppointmentId": sa_id, "ServiceResourceId": tech_id})
+                except Exception as exc:  # noqa: BLE001 — FS territory/scheduling config may block it
+                    if case == 0:  # warn once, not 28 times
+                        detail = str(exc).split("Response content:")[-1].strip()[:150]
+                        print(f"  ! technician not assigned (FS config): {detail}")
+                        print("    -> appointments still created; cards fall back to 'Call support'.")
             number = sf.ServiceAppointment.get(sa_id)["AppointmentNumber"]
             reason = (REASONS_IN if warranty_active else REASONS_OUT)[mi % len(REASONS_IN)]
             rows.append((number, model_id, tag, reason))
