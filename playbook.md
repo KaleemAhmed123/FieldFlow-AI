@@ -569,7 +569,40 @@ curl http://localhost:8000/copilot/tools                   # unarmed -> {"availa
   seeded org). Mock-first tests: `tests/test_mcp_client.py`.
 - The 8 tools: appointment health · needing attention · customer appointments · technician schedule ·
   asset history · unassigned · out-of-warranty · status counts.
-- Guardrail: copilot tools are **read-only**; any write stays human-confirmed. Chat UI = next.
+- Guardrail: copilot tools are **read-only**; any write stays human-confirmed.
+
+## 3k. Admin copilot CHAT: Groq tool-calling over MCP (build step 14)
+
+*The agentic chat that uses the MCP tools from §3j. Admin asks in plain English → **Groq** picks
+tools → we run them over the live SF (8) + e-com (2) MCP servers → a grounded answer + `toolsUsed`
+(a mini decision-trace). READ-ONLY (the copilot never mutates). Groq-only this slice; single-turn.*
+
+```bash
+# Where it lives: the control panel's right dock → "Copilot" tab (type a question, or tap a starter).
+# API (curl): needs the live backend + GROQ_API_KEY + at least one armed MCP source.
+curl -s -X POST http://localhost:8000/copilot/chat -H 'content-type: application/json' \
+     -d '{"message":"How many appointments are in each status?"}' | jq
+#   -> {"available":true,"answer":"...","toolsUsed":[{"name":"...","args":{...},"result":"..."}]}
+# e-com question (works the moment ECOM_API_URL is set — no SF needed):
+curl -s -X POST http://localhost:8000/copilot/chat -H 'content-type: application/json' \
+     -d '{"message":"What is the stock of PCB-492?"}' | jq
+```
+
+- Code: `apps/orchestrator/app/copilot/` (`chat.py` = the loop) · route `POST /copilot/chat` ·
+  MCP clients `app/mcp/client.py` (`SalesforceMcpClient` + `EcomMcpClient`, shared session) ·
+  panel `apps/control-panel/src/components/CopilotChat.tsx`. Offline tests: `tests/test_copilot_chat.py`.
+- **Tool sources:** SF Hosted MCP (§3j, needs `SF_MCP_*`) + e-com MCP (`ECOM_MCP_URL`, else derived
+  from `ECOM_API_URL` + `/api/mcp` — arms automatically, no auth). Either can be off; the copilot
+  uses whatever is armed.
+- **Name aliasing:** SF's hosted MCP mangles tool names into ~65-char strings; Groq rejects names
+  over 64 chars, so the loop aliases them and maps back when calling (the trace shows the real name).
+- **The loop self-corrects:** if Groq calls a tool with the wrong args, the MCP validation error is
+  fed back and the model retries — proven live (it fixed `part_number` → `partNo` on its own).
+- ⚠ **SF refresh-token rotation:** some ECAs issue a NEW refresh token on every refresh and
+  invalidate the old one. The client keeps the rotated token in-memory, but a **process restart**
+  reads the original from `.env` — if that one was already rotated away, re-run
+  `uv run python -m app.mcp.login` to mint a fresh `SF_MCP_REFRESH_TOKEN`. (E-com has no auth, so
+  it's never affected.)
 
 ## 3i. E-com inventory service: the separate stock source + MCP (build step 13)
 
