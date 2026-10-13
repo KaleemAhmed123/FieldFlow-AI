@@ -78,3 +78,19 @@ class AiDecision(Base):
     correlation_id: Mapped[str] = mapped_column(String, index=True)
     decision: Mapped[dict] = mapped_column(JSON, default=dict)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
+
+
+class AppSecret(Base):
+    """Durable key/value for secrets that ROTATE at runtime (build step 14). The Salesforce Hosted-
+    MCP ECA forces refresh-token rotation (can't be disabled in the org), so each refresh mints a
+    new token and kills the old one. We store the latest here; on a restart the app reads it instead
+    of the now-stale copy in the env, so the SF copilot survives redeploys/restarts.
+    """
+
+    __tablename__ = "app_secrets"
+
+    key: Mapped[str] = mapped_column(String, primary_key=True)
+    value: Mapped[str] = mapped_column(String)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=_now, onupdate=_now
+    )
