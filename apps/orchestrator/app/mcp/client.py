@@ -104,6 +104,7 @@ class SalesforceMcpClient(_McpReach):
         self._http = http  # injectable for tests
         self._access_token: str | None = None
         self._expires_at: float = 0.0
+        self._rt_dirty = False  # set when a refresh rotated the token → the route persists it
 
     def _client(self) -> httpx.Client:
         if self._http is None:
@@ -126,10 +127,11 @@ class SalesforceMcpClient(_McpReach):
         body = resp.json()
         self._access_token = body["access_token"]
         # Some ECAs ROTATE the refresh token: each refresh invalidates the prior one and returns a
-        # new one. Keep the new one so a long-running server survives rotation. (A process restart
-        # still needs a fresh `python -m app.mcp.login`, since .env keeps the original — POC limit.)
-        if new_rt := body.get("refresh_token"):
+        # new one. Keep it AND flag it dirty so the route persists it to the DB — else a restart
+        # reads the now-stale env copy and the SF copilot dies (see app/db/secrets.py).
+        if (new_rt := body.get("refresh_token")) and new_rt != self._refresh_token:
             self._refresh_token = new_rt
+            self._rt_dirty = True
         # Salesforce refresh-grant responses omit expires_in; assume ~2h and lean on the 401 path.
         self._expires_at = time.time() + float(body.get("expires_in", 7200))
         log.info("mcp.access_token_refreshed")
@@ -137,6 +139,22 @@ class SalesforceMcpClient(_McpReach):
 
     def _headers(self) -> dict[str, str]:
         return {"Authorization": f"Bearer {self.access_token()}"}
+
+    @property
+    def refresh_token(self) -> str:
+        return self._refresh_token
+
+    def set_refresh_token(self, token: str) -> None:
+        """Seed the client from a persisted token on boot (no dirty flag — it's already saved)."""
+        self._refresh_token = token
+
+    def pop_rotated_token(self) -> str | None:
+        """The new refresh token if a rotation happened since last checked, else None. Clears the
+        flag — the caller is expected to persist what it returns."""
+        if not self._rt_dirty:
+            return None
+        self._rt_dirty = False
+        return self._refresh_token
 
 
 class EcomMcpClient(_McpReach):
