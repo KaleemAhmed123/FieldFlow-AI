@@ -132,7 +132,7 @@ async def test_happy_path_executes_to_closed(sessionmaker, vonage, graph):
     assert "calendar" in action_types and "dial" in action_types
     # slice 6: a service-report PDF rides on the confirmation + the trace.
     assert "pdf" in action_types
-    assert case.decision_trace["serviceReport"]["url"].endswith(".pdf")
+    assert case.decision_trace["serviceReport"]["url"].startswith("https://")
 
 
 # Robustness — a real-org appointment with no assigned resource (technician None, as a live SF→RCS

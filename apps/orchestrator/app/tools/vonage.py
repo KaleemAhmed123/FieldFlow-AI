@@ -59,7 +59,9 @@ def actions_to_suggestions(actions: list[CardAction]) -> list[dict]:
                 out.append({"type": "dial", **chip, "phone_number": phone,
                             "fallback_url": SUGGESTION_FALLBACK_URL})
         elif a.type in ("view", "pdf") and a.value:
-            out.append({"type": "open_url", **chip, "url": a.value})
+            # open_url REQUIRES a `description` (Vonage #1020 "suggestions[i].description is
+            # required"); reply / dial / share_location do not.
+            out.append({"type": "open_url", **chip, "description": a.label[:100], "url": a.value})
         # calendar / photo: no POC-formable flat chip → panel-only (see docstring).
     return out
 
@@ -73,6 +75,24 @@ CARD_MEDIA_URL = "https://field-flow-ai.vercel.app/card.png"
 
 def _card_media(label: str) -> str:
     return CARD_MEDIA_URL
+
+
+CARD_MEDIA_HEIGHT = "MEDIUM"
+# A standalone `card` (payment, confirmation) needs an rcs object with these two; a carousel needs
+# card_width instead. Vonage 422s a card message that's missing its rcs object.
+_STANDALONE_RCS = {"image_alignment": "LEFT", "card_orientation": "VERTICAL"}
+
+
+def _rich_card(title: str, text: str, suggestions: list[dict]) -> dict:
+    """A standalone RCS card body. Vonage requires title + text + media_url + media_height on EVERY
+    card — an empty one 422s (`card.text` / `card.media_url` "is required"). Shared by the payment +
+    confirmation cards; the image is our one static branded PNG."""
+    card: dict = {"title": title[:200], "text": (text or title)[:2000],
+                  "media_url": CARD_MEDIA_URL, "media_height": CARD_MEDIA_HEIGHT,
+                  "media_description": title[:100]}
+    if suggestions:
+        card["suggestions"] = suggestions
+    return card
 
 
 class VonageClient(Protocol):
@@ -115,33 +135,33 @@ def card_to_rcs(to: str, card: Card, agent_id: str, correlation_id: str) -> dict
     """
     base = {"from": agent_id, "to": to, "channel": "rcs"}
     if card.kind == "payment":
-        return {**base, "message_type": "card", "card": {
-            "title": card.title[:200],
-            "suggestions": [{
-                "type": "open_url", "text": "Approve & Pay",
-                "postback_data": f"{correlation_id}|pay", "url": card.payUrl,
-            }],
-        }}
+        # A single Approve-&-Pay standalone rich card (needs text + media_url + the rcs object),
+        # with an open_url suggestion (needs a description) to the Razorpay short link.
+        pay = [{"type": "open_url", "text": "Approve & Pay"[:25],
+                "description": "Open the secure Razorpay payment page",
+                "postback_data": f"{correlation_id}|pay", "url": card.payUrl}]
+        return {**base, "message_type": "card",
+                "card": _rich_card(card.title, "Tap below to pay securely via Razorpay.", pay),
+                "rcs": _STANDALONE_RCS}
     if not card.options:
-        # A confirmation (no slot options): send a PLAIN RCS TEXT — the one shape proven to deliver
-        # live (the offer's lead text). An empty carousel is a 422 ("must have at least 2 items"); a
-        # single `card` needs media and a text open_url chip needs a `description` Vonage rejects —
-        # both 422'd. So the body goes as text and any link action (PDF/report) rides INLINE in it.
-        text = card.body or card.title or ""
-        for a in card.actions:
-            if a.type in ("pdf", "view") and a.value:
-                text = f"{text}\n{a.label}: {a.value}"
-        return {**base, "message_type": "text", "text": text[:2000]}
+        # A confirmation (no slot options) is ONE informational card — image + body + any link
+        # action (PDF). A standalone card, NOT a carousel (empty carousel 422s). Best-effort at call
+        # site so a confirmation hiccup can't strand an already-rescheduled case.
+        confirm = _rich_card(card.title, card.body or "", actions_to_suggestions(card.actions))
+        return {**base, "message_type": "card", "card": confirm, "rcs": _STANDALONE_RCS}
+    # Offer carousel: one card per slot — image + time + technician — carrying a "Choose" reply AND
+    # the control-plane action chips (Share Location / Call) as buttons on the card (capped at the
+    # 4-suggestion RCS limit). Every card needs text, so fall back to the slot label when blank.
+    extra = actions_to_suggestions(card.actions)
     cards = [{
         "title": o.label[:200],
-        "text": " · ".join(p for p in (o.technician, o.note) if p)[:2000],
+        "text": (" · ".join(p for p in (o.technician, o.note) if p) or o.label)[:2000],
         "media_url": _card_media(o.label),  # RCS requires media on every carousel card
-        "media_height": "MEDIUM",           # required with media_url (SHORT|MEDIUM for carousel)
+        "media_height": CARD_MEDIA_HEIGHT,  # required with media_url (SHORT|MEDIUM for carousel)
         "media_description": o.label[:100],
-        "suggestions": [{
-            "type": "reply", "text": "Choose",
-            "postback_data": f"{correlation_id}|{o.slotId}|{card.version}",
-        }],
+        "suggestions": ([{"type": "reply", "text": "Choose",
+                          "postback_data": f"{correlation_id}|{o.slotId}|{card.version}"}]
+                        + extra)[:MAX_SUGGESTIONS],
     } for o in card.options[:MAX_SUGGESTIONS]]
     return {**base, "message_type": "carousel", "carousel": {"cards": cards},
             "rcs": {"card_width": "MEDIUM"}}  # required for carousel; pairs with MEDIUM height
@@ -183,15 +203,11 @@ class VonageMessagesClient:
     def send_card(self, to: str, card: Card) -> dict:
         correlation_id = to  # the call site passes correlationId here; the device is self._to
         if card.body and card.kind != "payment" and card.options:
-            # Lead with the AI message as a plain RCS text carrying the action chips (Share Location
-            # / Dial), then the rich slot cards — the natural chat UX. Carousel only: a confirmation
-            # is a single card that already carries its own body (card_to_rcs), so no lead text.
-            # Best-effort: a failed text never blocks the card.
+            # Lead with the AI message as plain text, then the rich slot cards. The action chips now
+            # ride on the cards themselves (card_to_rcs), so the lead is body only. Carousel only:
+            # payment + confirmation are single cards that carry their own body. Best-effort send.
             lead = {"from": self._agent_id, "to": self._to, "channel": "rcs",
                     "message_type": "text", "text": card.body[:2000]}
-            suggestions = actions_to_suggestions(card.actions)
-            if suggestions:
-                lead["suggestions"] = suggestions
             try:
                 self._post(lead, "text")
             except Exception as exc:  # noqa: BLE001 — body is nice-to-have, never fail the card on it

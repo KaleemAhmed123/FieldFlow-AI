@@ -47,23 +47,32 @@ def test_carousel_embeds_correlation_slot_version_and_caps_at_four():
 
 
 def test_payment_card_is_open_url_action():
-    # RCS has no "action" suggestion type — the pay chip is an open_url (a `type:"action"` here was
-    # a 422 #1020 waiting on the parts/pay flow).
+    # RCS has no "action" suggestion type — the pay chip is an open_url. The standalone card ALSO
+    # requires text + media_url + media_height + the rcs object + the open_url's description
+    # (all missing → the #1020 422 that 500'd the parts/pay flow).
     card = Card(kind="payment", title="Approve & Pay ₹3,700", payUrl="https://rzp.io/i/x")
-    sugg = card_to_rcs("916394493446", card, "agent", "WO-9")["card"]["suggestions"][0]
+    msg = card_to_rcs("916394493446", card, "agent", "WO-9")
+    c = msg["card"]
+    assert c["text"] and c["media_url"].startswith("https://") and c["media_height"]
+    assert msg["rcs"]["card_orientation"] and msg["rcs"]["image_alignment"]
+    sugg = c["suggestions"][0]
     assert sugg["type"] == "open_url" and sugg["url"] == "https://rzp.io/i/x"
+    assert sugg["description"]  # open_url needs a description
 
 
-def test_confirmation_maps_to_plain_text_with_inline_links():
-    # A card with NO slot options (confirmation) maps to a PLAIN TEXT — never an empty carousel
-    # ("cards": [] is a 422 that 500'd the live tap) — with link actions inlined in the body.
+def test_confirmation_is_a_standalone_rich_card():
+    # A card with NO slot options (confirmation) maps to a standalone rich card — never an empty
+    # carousel (a 422). Vonage requires title + text + media_url + media_height + the rcs object.
     card = Card(kind="confirmation", title="You're all set", body="You're confirmed for TOMORROW.",
                 actions=[CardAction(type="calendar", label="Add to calendar", value="TOMORROW"),
                          CardAction(type="pdf", label="Service report (PDF)", value="https://x/r.pdf")])
     msg = card_to_rcs("916394493446", card, "agent", "WO-9")
-    assert msg["message_type"] == "text" and "carousel" not in msg and "card" not in msg
-    assert "You're confirmed for TOMORROW." in msg["text"]
-    assert "https://x/r.pdf" in msg["text"]  # the PDF rides inline, not as a chip that 422s
+    assert msg["message_type"] == "card" and "carousel" not in msg
+    c = msg["card"]
+    assert c["text"] == "You're confirmed for TOMORROW." and c["media_url"].startswith("https://")
+    assert c["media_height"] and msg["rcs"]["card_orientation"] and msg["rcs"]["image_alignment"]
+    pdf = c["suggestions"][0]  # calendar omitted; the PDF open_url carries the required description
+    assert pdf["type"] == "open_url" and pdf["url"] == "https://x/r.pdf" and pdf["description"]
 
 
 def test_actions_map_to_rcs_suggestions():
@@ -79,8 +88,9 @@ def test_actions_map_to_rcs_suggestions():
                         "postback_data": "share_location"}  # no `share_location:true` flag
     assert chips[1]["type"] == "dial" and chips[1]["phone_number"] == "+919000000042"  # E.164, no -
     assert chips[1]["fallback_url"]                                   # dial requires a fallback
-    assert chips[2] == {"type": "open_url", "text": "View appointment",
-                        "postback_data": "view", "url": "https://x/case"}
+    # open_url carries the required description
+    assert chips[2] == {"type": "open_url", "text": "View appointment", "postback_data": "view",
+                        "description": "View appointment", "url": "https://x/case"}
     assert len(chips) == 3                                            # calendar has no POC chip
 
 

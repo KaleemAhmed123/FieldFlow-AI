@@ -49,10 +49,10 @@ _CONTEXT_READS = [
 # Demo support line used for "Call support" when a technician's own number isn't on the record.
 SUPPORT_PHONE = "+91-80000-00000"
 
-# The service-report PDF link put on the confirmation (SRS FR-13b, the PDF-rich-card primitive).
-# ponytail: a single placeholder URL — a real per-case generated PDF is the gated live step; the
-# point here is to show the primitive + the "report generated" trace note.
-SERVICE_REPORT_URL = "https://field-flow-ai.vercel.app/service-report.pdf"
+# The service-report link put on the confirmation (SRS FR-13b, the PDF-rich-card primitive).
+# ponytail: points at the deployed site (a real per-case generated PDF is the gated live step). Was
+# /service-report.pdf, which 404s — a dead button on the card; the site root is a live placeholder.
+SERVICE_REPORT_URL = "https://field-flow-ai.vercel.app"
 
 
 def _confirmation_body(archetype: str, context: dict, slot: dict) -> str:
