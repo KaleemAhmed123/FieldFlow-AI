@@ -50,20 +50,40 @@ def _content_to_text(content: Any) -> str:
     return "\n".join(p for p in parts if p)
 
 
-async def _gather(sources: dict[str, Any]) -> tuple[list[dict], dict[str, tuple[Any, str]]]:
-    """List tools from every source. Returns (Groq tool schemas, alias -> (source, real name))."""
+async def _gather(
+    sources: dict[str, Any],
+) -> tuple[list[dict], dict[str, tuple[Any, str]], list[str]]:
+    """List tools from every source. A source that fails (e.g. a dead Salesforce token) is skipped,
+    not fatal — the copilot still answers from the sources that work. Returns (Groq tool schemas,
+    alias -> (source, real name), names of unavailable sources)."""
     schemas: list[dict] = []
     route: dict[str, tuple[Any, str]] = {}
     taken: set[str] = set()
-    for src in sources.values():
-        for t in await src.list_tools():
+    down: list[str] = []
+    for label, src in sources.items():
+        try:
+            tools = await src.list_tools()
+        except Exception as exc:  # one bad source must not take the whole copilot down
+            log.warning("copilot.source_unavailable", source=label, error=str(exc))
+            down.append(label)
+            continue
+        for t in tools:
             alias = _alias(t["name"], taken)
             route[alias] = (src, t["name"])
             schemas.append({"type": "function", "function": {
                 "name": alias, "description": t.get("description", ""),
                 "parameters": t.get("inputSchema") or {"type": "object", "properties": {}},
             }})
-    return schemas, route
+    return schemas, route, down
+
+
+def _result(answer: str, used: list, down: list, *, truncated: bool = False) -> dict:
+    out: dict = {"answer": answer, "toolsUsed": used}
+    if down:
+        out["sourcesUnavailable"] = down
+    if truncated:
+        out["truncated"] = True
+    return out
 
 
 async def run_copilot(
@@ -71,7 +91,7 @@ async def run_copilot(
 ) -> dict:
     """One single-turn copilot answer. `sources` = {label: McpClient}; empty → the model answers
     from nothing (or says it needs a tool). Returns {answer, toolsUsed[, truncated]}."""
-    schemas, route = await _gather(sources)
+    schemas, route, down = await _gather(sources)
     messages: list[dict] = [{"role": "system", "content": _SYSTEM},
                             {"role": "user", "content": message}]
     used: list[dict] = []
@@ -84,7 +104,7 @@ async def run_copilot(
         msg = resp.choices[0].message
         calls = msg.tool_calls or []
         if not calls:
-            return {"answer": msg.content or "", "toolsUsed": used}
+            return _result(msg.content or "", used, down)
         # OpenAI/Groq require the assistant message that requested the calls before the results.
         messages.append({
             "role": "assistant", "content": msg.content or "",
@@ -113,7 +133,7 @@ async def run_copilot(
     # Step cap reached — one last call with no tools to force a final answer.
     resp = await asyncio.to_thread(
         groq_client.chat.completions.create, model=model, messages=messages, temperature=0)
-    return {"answer": resp.choices[0].message.content or "", "toolsUsed": used, "truncated": True}
+    return _result(resp.choices[0].message.content or "", used, down, truncated=True)
 
 
 def build_groq_client(settings: Any) -> Any:

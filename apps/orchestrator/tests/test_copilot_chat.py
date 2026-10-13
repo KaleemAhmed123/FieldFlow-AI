@@ -75,6 +75,34 @@ def test_loop_runs_tool_then_grounds_answer() -> None:
                for m in groq.seen[1]["messages"])
 
 
+class DeadSource:
+    """A source whose token/connection is dead — every call raises."""
+
+    async def list_tools(self) -> list[dict]:
+        raise RuntimeError("invalid_grant: expired refresh token")
+
+    async def call_tool(self, name: str, arguments: dict):  # noqa: ANN201
+        raise RuntimeError("invalid_grant: expired refresh token")
+
+
+def test_dead_source_is_skipped_not_fatal() -> None:
+    # Salesforce token is dead, e-com is fine — the copilot must still answer, not 500.
+    good = FakeSource("get_stock", "PCB-492: 1 in Noida")
+    groq = FakeGroq([
+        _resp(None, [_toolcall("c1", "get_stock", '{"partNo": "PCB-492"}')]),
+        _resp("There is 1 in stock.", None),
+    ])
+    out = asyncio.run(run_copilot(
+        "stock?", sources={"salesforce": DeadSource(), "ecom": good},
+        groq_client=groq, model="m"))
+
+    assert out["answer"] == "There is 1 in stock."
+    assert out["sourcesUnavailable"] == ["salesforce"]  # the dead one is reported, not fatal
+    assert good.called  # e-com still ran
+    # Groq was only offered the working source's tool
+    assert [f["function"]["name"] for f in groq.seen[0]["tools"]] == ["get_stock"]
+
+
 def test_answers_without_tools_when_none_armed() -> None:
     groq = FakeGroq([_resp("I have no tools to answer that.", None)])
     out = asyncio.run(run_copilot("hi", sources={}, groq_client=groq, model="m"))
