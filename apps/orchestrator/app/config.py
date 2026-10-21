@@ -60,6 +60,8 @@ class Settings(BaseSettings):
     # lives in code (app/commerce/service.py); only these knobs are env-tunable.
     razorpay_key_id: str = ""
     razorpay_key_secret: str = ""
+    razorpay_poll_seconds: float = 10.0  # auto-confirm sweep seconds (real gateway only)
+    razorpay_payment_ttl_seconds: float = 180.0  # unpaid link expires after 3 min → stop polling
     commerce_currency: str = "INR"
     commerce_labour_paise: int = 50000       # ₹500 labour added to every chargeable quote
     commerce_high_value_paise: int = 500000  # quotes at/above ₹5,000 need a human (risk-tiering)

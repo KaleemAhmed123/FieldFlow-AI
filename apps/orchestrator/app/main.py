@@ -21,9 +21,10 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fieldflow_contract import AppointmentAtRisk
 
+from app import payment_poller
 from app.api.routes import router as api_router
 from app.commerce import router as commerce_router
-from app.commerce.razorpay import build_gateway
+from app.commerce.razorpay import RazorpayGateway, build_gateway
 from app.commerce.service import CommerceService
 from app.config import settings
 from app.db.secrets import SF_REFRESH_TOKEN_KEY, load_secret
@@ -144,8 +145,20 @@ async def lifespan(app: FastAPI):
             source_task = asyncio.create_task(app.state.event_source.run(_publish_event))
             log.info("event_source.started")
 
+        # Auto-confirm payments (replaces the /sim/payment nudge). Real Razorpay only — the fake
+        # reports every unpaid link as captured, so offline/tests keep using /sim/payment.
+        poller_task: asyncio.Task | None = None
+        if isinstance(app.state.razorpay, RazorpayGateway):
+            poller_task = asyncio.create_task(payment_poller.run(
+                get_sessionmaker(), app.state.graph, app.state.razorpay,
+                settings.razorpay_poll_seconds, settings.razorpay_payment_ttl_seconds,
+            ))
+            log.info("payment_poller.enabled")
+
         yield
 
+        if poller_task is not None:
+            poller_task.cancel()
         if source_task is not None:
             await app.state.event_source.stop()
             source_task.cancel()

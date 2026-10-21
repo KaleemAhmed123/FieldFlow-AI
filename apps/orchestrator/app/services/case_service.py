@@ -166,6 +166,23 @@ async def record_photo(session: AsyncSession, correlation_id: str) -> dict:
     return {"ok": True, **result}
 
 
+async def expire_payment(session: AsyncSession, correlation_id_: str) -> bool:
+    """Mark a PAYMENT_PENDING case EXPIRED when the customer didn't pay within the TTL (the payment
+    poller's timeout). The graph checkpoint lingers, so a late /sim/payment can still settle it;
+    this only stops the auto-poll and shows the timeout in /cases. Returns True if it expired one.
+    """
+    case = (
+        await session.execute(select(Case).where(Case.correlation_id == correlation_id_))
+    ).scalar_one_or_none()
+    if case is None or case.status != "PAYMENT_PENDING":
+        return False  # already moved on (paid/closed) — nothing to expire
+    case.status = "PAYMENT_EXPIRED"
+    session.add(AuditLog(correlation_id=correlation_id_, kind="payment_expired", payload={}))
+    await session.commit()
+    log.info("case.payment_expired", correlationId=correlation_id_)
+    return True
+
+
 async def handle_event(session: AsyncSession, event: AppointmentAtRisk, *, graph) -> dict:
     correlation_id.set(event.correlationId)
 

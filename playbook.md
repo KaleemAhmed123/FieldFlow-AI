@@ -270,8 +270,15 @@ curl http://localhost:8000/cases/WO-PAY   # decisionTrace.commerce = {quote, ord
 
 - **High-value gate:** a quote ≥ `COMMERCE_HIGH_VALUE_PAISE` (default ₹5,000) pauses at
   `AWAITING_QUOTE_APPROVAL` for an operator — resume with the **existing** `/sim/approve`.
-- Env: `RAZORPAY_KEY_ID`, `RAZORPAY_KEY_SECRET` (blank → fake), `COMMERCE_CURRENCY`,
-  `COMMERCE_LABOUR_PAISE`, `COMMERCE_HIGH_VALUE_PAISE` (see `.env.example`).
+- **Auto-confirm (real Razorpay only):** with a real test key set, a background sweep
+  (`app/payment_poller.py`, every `RAZORPAY_POLL_SECONDS`=10s) polls each `PAYMENT_PENDING` link and
+  resumes the case the moment it's paid — so on a live deploy the customer just pays on their phone,
+  no `/sim/payment` needed. A link unpaid past `RAZORPAY_PAYMENT_TTL_SECONDS` (default 180s / 3 min)
+  is marked `PAYMENT_EXPIRED` and the sweep stops polling it. `/sim/payment` stays as a manual
+  override; the fake gateway never polls (offline/tests use `/sim/payment`).
+- Env: `RAZORPAY_KEY_ID`, `RAZORPAY_KEY_SECRET` (blank → fake), `RAZORPAY_POLL_SECONDS`,
+  `RAZORPAY_PAYMENT_TTL_SECONDS`, `COMMERCE_CURRENCY`, `COMMERCE_LABOUR_PAISE`,
+  `COMMERCE_HIGH_VALUE_PAISE` (see `.env.example`).
 
 ```bash
 # Prove the commerce flow + no-double-charge offline (no keys needed) — runs in CI:
