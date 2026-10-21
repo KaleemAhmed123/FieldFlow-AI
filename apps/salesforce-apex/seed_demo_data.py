@@ -245,12 +245,16 @@ def main() -> None:
                 "SchedStartTime": start.strftime(_fmt),
                 "SchedEndTime": (start + timedelta(hours=2)).strftime(_fmt),
             })
+            # Arrival window the Field Service scheduler (GetSlots) searches inside. Wide + rolling
+            # (now → +90 days) so real bookable slots stay findable for months without re-seeding
+            # (availability-slots.md); SchedStart/End above stay the current at-risk booking.
+            window_start = datetime.now(UTC)
             enrich("ServiceAppointment", sa_id, {
                 "Subject": f"{model_id} service — {cust}",
                 "Description": f"{model_name} at risk; recover via FieldFlow.",
                 "Duration": 2, "DurationType": "Hours",
-                "EarliestStartTime": start.strftime(_fmt),
-                "DueDate": (start + timedelta(days=2)).strftime(_fmt)})
+                "EarliestStartTime": window_start.strftime(_fmt),
+                "DueDate": (window_start + timedelta(days=90)).strftime(_fmt)})
             _assign_resource(sf, sa_id, tech_id, warn=(case == 0))
 
             number = sf.ServiceAppointment.get(sa_id)["AppointmentNumber"]

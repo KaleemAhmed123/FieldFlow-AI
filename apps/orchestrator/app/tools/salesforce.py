@@ -21,7 +21,7 @@ from __future__ import annotations
 import re
 from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING, Any, Protocol
-from urllib.parse import quote
+from urllib.parse import quote, urlencode
 from zoneinfo import ZoneInfo
 
 from app.logging import get_logger
@@ -37,8 +37,10 @@ class SalesforceTools(Protocol):
     def get_customer(self, customer_id: str) -> dict | None: ...
     def get_asset(self, asset_id: str) -> dict | None: ...
     def get_technician(self, resource_id: str) -> dict | None: ...
+    def get_slots(self, appointment_id: str) -> list[dict]: ...
     def reschedule(
-        self, appointment_id: str, slot_id: str, slot_label: str | None = None
+        self, appointment_id: str, slot_id: str, slot_label: str | None = None,
+        start_time: str | None = None, end_time: str | None = None,
     ) -> dict: ...
     def record_payment(
         self, receipt: dict, appointment_id: str | None = None
@@ -53,6 +55,9 @@ class FakeSalesforce:
         # raises, the consumer handler fails, and the message dead-letters to events.dlq.
         self.down: bool = False
         self._payments: dict[str, dict] = {}  # paymentId -> stored payment (idempotent by key)
+        # Real-availability offline twin: empty by default so the graph falls back to the proposer's
+        # canned slots (unchanged offline behaviour). A test seeds this to exercise the scheduler.
+        self._slots: list[dict] = []
         self._appointments: dict[str, dict] = {
             "SA-19281": {
                 "appointmentId": "SA-19281",
@@ -111,10 +116,19 @@ class FakeSalesforce:
         tech = self._technicians.get(resource_id)
         return dict(tech) if tech else None
 
-    def reschedule(self, appointment_id: str, slot_id: str, slot_label: str | None = None) -> dict:
+    def get_slots(self, appointment_id: str) -> list[dict]:
+        """Real-availability offline twin: returns whatever a test seeded on `_slots` (empty by
+        default, so the graph uses its canned slots). The real engine lives in RestSalesforce."""
+        self._guard()
+        return [dict(s) for s in self._slots]
+
+    def reschedule(
+        self, appointment_id: str, slot_id: str, slot_label: str | None = None,
+        start_time: str | None = None, end_time: str | None = None,
+    ) -> dict:
         """Apply the chosen slot (fake). The Toolbox action ran the authority ladder first.
-        `slot_label` is ignored here — it only matters to RestSalesforce, which turns it into the
-        concrete start/end times the real org needs."""
+        `slot_label`/`start_time`/`end_time` are ignored here — they only matter to RestSalesforce,
+        which books the concrete start/end the real org needs."""
         return {"appointmentId": appointment_id, "slotId": slot_id, "status": "RESCHEDULED"}
 
     def record_payment(self, receipt: dict, appointment_id: str | None = None) -> dict:
@@ -168,6 +182,29 @@ def _to_utc_z(dt: datetime) -> str:
     return dt.astimezone(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
+def _parse_iso(s: str) -> datetime:
+    """Parse an ISO-8601 instant tolerant of the forms Salesforce emits: a trailing ``Z`` and a
+    numeric offset without a colon (``+0000``). Apex ``JSON.serialize`` of a Datetime gives
+    ``2026-10-22T09:00:00.000+0000`` — ``datetime.fromisoformat`` wants ``+00:00``, so normalise."""
+    s = s.strip()
+    if s.endswith("Z"):
+        s = s[:-1] + "+00:00"
+    m = re.search(r"([+-]\d{2})(\d{2})$", s)
+    if m:
+        s = s[: m.start()] + m.group(1) + ":" + m.group(2)
+    return datetime.fromisoformat(s)
+
+
+def format_slot_label(start_iso: str, end_iso: str, tz_name: str) -> str:
+    """A real slot's (start, end) ISO instants → a short human label in the business timezone, e.g.
+    ``"Wed 22 Oct, 09:00-11:00"``. Display only; the exact instants still travel as ISO for the
+    booking. Unlike the canned "TODAY/TOMORROW" labels, real slots span any day, so name the day."""
+    tz = ZoneInfo(tz_name)
+    s = _parse_iso(start_iso).astimezone(tz)
+    e = _parse_iso(end_iso).astimezone(tz)
+    return f"{s:%a %d %b}, {s:%H:%M}-{e:%H:%M}"
+
+
 class RestSalesforce:
     """The real org behind the same Protocol, over the Apex REST class (apps/salesforce-apex/).
 
@@ -180,11 +217,15 @@ class RestSalesforce:
 
     def __init__(
         self, *, login_url: str, client_id: str, client_secret: str, tz_name: str,
+        scheduling_policy_id: str = "", operating_hours_id: str = "", slots_max: int = 6,
         timeout: float = 20.0, client: httpx.Client | None = None,
     ) -> None:
         self._login_url = login_url.rstrip("/")
         self._client_id, self._client_secret = client_id, client_secret
         self._tz_name = tz_name
+        self._policy_id = scheduling_policy_id
+        self._oh_id = operating_hours_id
+        self._slots_max = slots_max
         self._timeout = timeout
         self._client = client  # injected in tests; else built lazily
         self._token: str | None = None
@@ -249,14 +290,38 @@ class RestSalesforce:
     def get_technician(self, resource_id: str) -> dict | None:
         return self._get("technician", resource_id)
 
+    def get_slots(self, appointment_id: str) -> list[dict]:
+        """Real availability from Field Service's own scheduler via the Apex `/slots` endpoint
+        (FSL.AppointmentBookingService.GetSlots). Returns a list of {start, end, grade}; [] when the
+        ids aren't configured, the appointment is unknown, or the engine finds nothing — the graph
+        then falls back to its canned slots. Fails SOFT (logs, returns []) so a scheduling hiccup
+        never dead-ends a recovery."""
+        if not (self._policy_id and self._oh_id):
+            return []  # not configured → fall back to canned (slotsAuthority="fallback")
+        params = urlencode({"policyId": self._policy_id, "operatingHoursId": self._oh_id,
+                            "max": str(self._slots_max)})
+        resp = self._call(
+            "GET", f"/services/apexrest/fieldflow/slots/{quote(str(appointment_id))}?{params}",
+        )
+        if resp.status_code >= 400:
+            log.error("salesforce.slots_rejected", status=resp.status_code, body=resp.text)
+            return []  # fail soft → canned fallback
+        data = resp.json()
+        return data if isinstance(data, list) else []
+
     def reschedule(
-        self, appointment_id: str, slot_id: str, slot_label: str | None = None
+        self, appointment_id: str, slot_id: str, slot_label: str | None = None,
+        start_time: str | None = None, end_time: str | None = None,
     ) -> dict:
         """The one mutation: move the appointment to the chosen slot's real times. The authority
-        ladder already ran in the Toolbox. The label carries the only time info, so it must come."""
-        if not slot_label:
-            raise ValueError(f"reschedule needs the slot label for its times; slotId={slot_id!r}")
-        start, end = slot_label_to_times(slot_label, self._tz_name)
+        ladder already ran in the Toolbox. A real scheduler slot passes `start_time`/`end_time`
+        (concrete ISO instants) directly; a canned slot passes only `slot_label`, which we parse."""
+        if start_time and end_time:
+            start, end = start_time, end_time
+        elif slot_label:
+            start, end = slot_label_to_times(slot_label, self._tz_name)
+        else:
+            raise ValueError(f"reschedule needs start/end or a slot label; slotId={slot_id!r}")
         resp = self._call(
             "POST", "/services/apexrest/fieldflow/reschedule",
             json={"appointmentId": appointment_id, "startTime": start, "endTime": end},
@@ -296,4 +361,6 @@ def build_salesforce(settings: Any) -> SalesforceTools:
     return RestSalesforce(
         login_url=settings.sf_login_url, client_id=settings.sf_client_id,
         client_secret=settings.sf_client_secret, tz_name=settings.sf_timezone,
+        scheduling_policy_id=settings.sf_scheduling_policy_id,
+        operating_hours_id=settings.sf_operating_hours_id, slots_max=settings.sf_slots_max,
     )

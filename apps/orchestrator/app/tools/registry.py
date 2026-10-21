@@ -120,6 +120,12 @@ def build_toolbox(
         args=["resourceId"], description="ServiceResource: skills + territory (policy input).",
     )
     tb.register(
+        "scheduling.slots", "read",
+        lambda appointmentId: salesforce.get_slots(appointmentId),
+        args=["appointmentId"],
+        description="Real bookable slots from Field Service (FSL GetSlots); [] → canned fallback.",
+    )
+    tb.register(
         "inventory.find_part", "read",
         lambda partNo: inventory.find_part(partNo),
         args=["partNo"], description="Live stock of a part per location (may be stale by execute).",
@@ -147,18 +153,20 @@ def build_toolbox(
     )
 
     def reschedule_confirm(
-        appointmentId: str, slotId: str, slotLabel: str | None = None
+        appointmentId: str, slotId: str, slotLabel: str | None = None,
+        startTime: str | None = None, endTime: str | None = None,
     ) -> ToolResult:
         # Authority ladder for a reschedule = appointment exists + case not terminal. Real SF adds
         # permission/territory/travel-time here once the org is wired; the shape stays the same.
-        # slotLabel carries the slot's time ("TODAY 15:00-17:00") — RestSalesforce needs it to build
-        # the real start/end; FakeSalesforce ignores it.
+        # A real scheduler slot carries startTime/endTime (concrete ISO); a canned slot carries only
+        # slotLabel ("TODAY 15:00-17:00"). RestSalesforce prefers explicit times; Fake ignores both.
         appt = salesforce.get_appointment(appointmentId)
         if appt is None:
             return ToolResult(ok=False, reason=f"unknown appointment '{appointmentId}'")
         if appt.get("caseState") in TERMINAL_STATES:
             return ToolResult(ok=False, reason=f"case state {appt['caseState']} is terminal")
-        return ToolResult(ok=True, data=salesforce.reschedule(appointmentId, slotId, slotLabel))
+        return ToolResult(ok=True, data=salesforce.reschedule(
+            appointmentId, slotId, slotLabel, start_time=startTime, end_time=endTime))
 
     tb.register(
         "reschedule.confirm", "action", reschedule_confirm,

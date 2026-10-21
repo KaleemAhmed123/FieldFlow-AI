@@ -42,8 +42,10 @@ global with sharing class FieldFlowRest {
               : kind == 'customer'    ? (Object) getCustomer(id)
               : kind == 'asset'       ? (Object) getAsset(id)
               : kind == 'technician'  ? (Object) getTechnician(id)
+              : kind == 'slots'       ? (Object) getSlots(id)
               : null;
-            if (kind != 'appointment' && kind != 'customer' && kind != 'asset' && kind != 'technician') {
+            if (kind != 'appointment' && kind != 'customer' && kind != 'asset'
+                && kind != 'technician' && kind != 'slots') {
                 fail(res, 404, 'unknown resource "' + kind + '"');
             } else if (body == null) {
                 fail(res, 404, kind + ' "' + id + '" not found');
@@ -164,6 +166,54 @@ global with sharing class FieldFlowRest {
         }
         return null;
     }
+
+    /**
+     * Real availability — ask Field Service's own scheduler for genuine bookable slots.
+     *
+     * GET /services/apexrest/fieldflow/slots/{appointmentId}?policyId=..&operatingHoursId=..&max=6
+     *
+     * Delegates to the FSL managed package's `AppointmentBookingService.GetSlots`, which honours the
+     * technician's calendar, skills, territory and operating hours — we do NOT re-implement any of it.
+     * Returns a small list of concrete time windows; the orchestrator builds the display label + the
+     * slotId (it owns the slot catalog + the business timezone).
+     *
+     * Returns [] (200) when the engine finds nothing bookable (tech full / arrival window too tight)
+     * — the orchestrator then falls back to its canned slots. Returns null → 404 only when the
+     * appointment id itself is unknown.
+     *
+     * ⚠ Prerequisites (see availability-slots.md): the FSL managed package is installed; the
+     *   appointment has a ServiceTerritory + an arrival window (EarliestStartTime / DueDate); and the
+     *   caller passes a valid Scheduling Policy id + Operating Hours id (orchestrator config). Confirm
+     *   the GetSlots overload against your installed FSL version if deploy complains.
+     */
+    @SuppressWarnings('PMD.ApexCRUDViolation')
+    static List<Object> getSlots(String id) {
+        ServiceAppointment sa = findAppointment(id);
+        if (sa == null) return null;                       // unknown appointment → 404 (doGet)
+        Map<String, String> q = RestContext.request.params;
+        Id policyId = (Id) q.get('policyId');
+        Id ohId = (Id) q.get('operatingHoursId');
+        if (policyId == null || ohId == null) {
+            throw new FieldFlowException('slots needs policyId + operatingHoursId query params');
+        }
+        Integer maxN = q.containsKey('max') ? Integer.valueOf(q.get('max')) : 6;
+        List<Object> out = new List<Object>();
+        List<FSL.AppointmentBookingSlot> slots = FSL.AppointmentBookingService.GetSlots(
+            sa.Id, policyId, ohId, UserInfo.getTimeZone(), false /* exactAppointment */
+        );
+        if (slots == null) return out;                     // engine returned nothing → [] (200)
+        for (FSL.AppointmentBookingSlot s : slots) {
+            out.add(new Map<String, Object>{
+                'start' => s.Interval.Start,               // Datetime → ISO-8601 in JSON
+                'end'   => s.Interval.Finish,
+                'grade' => s.Grade                         // best-fit score (higher = better)
+            });
+            if (out.size() >= maxN) break;
+        }
+        return out;
+    }
+
+    public class FieldFlowException extends Exception {}
 
     static Map<String, Object> getTechnician(String id) {
         List<ServiceResource> rows = [SELECT Name FROM ServiceResource WHERE Id = :id LIMIT 1];

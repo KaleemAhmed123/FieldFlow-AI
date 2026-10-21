@@ -585,6 +585,36 @@ curl -X POST -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/jso
 - In the pipeline this fires automatically in `settle_payment` (graph) via the `salesforce.record_payment`
   tool — best-effort (money is already captured, so a SF write hiccup never strands the paid case).
 
+### Real availability slots → Field Service GetSlots (spec: `docs/specs/availability-slots.md`)
+
+*The customer's reschedule options are now **real bookable times** from Field Service's own scheduler
+(`FSL.AppointmentBookingService.GetSlots`), not canned ones. One GET endpoint on the SAME Apex class.
+The orchestrator shows **2 per RCS card** + a **"See other times"** pager; it books the exact instant.
+Blank ids or no openings → **falls back to canned slots** (`slotsAuthority: "fallback"` on the trace),
+so it never dead-ends. Orchestrator side built + tested (129 pass); the Apex is a draft you deploy.*
+
+```bash
+# From the repo root, with SF_* creds in apps/orchestrator/.env:
+# 1) redeploy the Apex class (now has the /slots route):
+uv run python apps/salesforce-apex/deploy_sf.py apps/salesforce-apex/FieldFlowRest.cls
+# 2) get the two org ids:  Developer Console -> Query Editor:
+#      SELECT Id, Name FROM FSL__Scheduling_Policy__c      -> the "Customer First" Id (a0p...)
+#      (Operating Hours Id is on the OperatingHours record used by your territories, 0OH...)
+# 3) set them for the orchestrator (apps/orchestrator/.env AND Render env), restart:
+#      SF_SCHEDULING_POLICY_ID=a0p...   SF_OPERATING_HOURS_ID=0OH...   (SF_SLOTS_MAX=6 optional)
+# 4) make sure demo appts have a Service Territory + a rolling arrival window (seed now sets a
+#    90-day window: EarliestStartTime=now, DueDate=now+90d — re-seed to refresh).
+# 5) smoke-test the live endpoint (get $TOKEN as in README §5):
+curl -H "Authorization: Bearer $TOKEN" \
+  "https://<yourdomain>.my.salesforce.com/services/apexrest/fieldflow/slots/SA-0070?policyId=<POLICY_ID>&operatingHoursId=<OH_ID>&max=6"
+# → [{"start":"2026-..Z","end":"2026-..Z","grade":85.0}, ...]   ([] = no window/availability; see step 4)
+```
+
+- Org ids already captured for `astreait88-dev-ed`: **Operating Hours** `0OHdM000005WIlLWAW` (Base
+  Calendar, Asia/Kolkata), **Scheduling Policy** `a0pdM000001SsT7QAK`.
+- In the pipeline this fires in `generate_options` via the `scheduling.slots` read tool. The AI still
+  decides the **part + message**; only the **times** come from the scheduler.
+
 ## 3j. Admin copilot: Salesforce Hosted MCP (build step 12 Task 4)
 
 *The AGENTIC path (separate from the deterministic Apex REST §3h). Salesforce HOSTS the MCP server;

@@ -107,6 +107,14 @@ class Settings(BaseSettings):
     # for Salesforce so every system agrees on the one instant (OQ2).
     sf_timezone: str = "Asia/Kolkata"
 
+    # Real availability (availability-slots.md). FSL GetSlots needs a Scheduling Policy id + an
+    # Operating Hours id; the Apex /slots endpoint takes them as query params. Blank → slots read
+    # returns [] and the graph falls back to canned slots (slotsAuthority="fallback"). sf_slots_max
+    # caps the fetched batch; we show 2 per RCS card and a "See other times" pager walks the rest.
+    sf_scheduling_policy_id: str = ""
+    sf_operating_hours_id: str = ""
+    sf_slots_max: int = 6
+
     # Salesforce Hosted MCP (build step 12 Task 4 — the AGENTIC admin-copilot path, SEPARATE from
     # the deterministic Apex REST above). A NEW External Client App (ECA), not the client-creds app.
     # Admin-based: one shared OAuth token. Blank → no MCP client (offline default, every test).

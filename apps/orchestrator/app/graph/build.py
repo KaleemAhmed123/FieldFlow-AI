@@ -35,7 +35,14 @@ from app.llm.proposer import Proposer, build_proposer
 from app.logging import get_logger
 from app.rag.store import KnowledgeStore
 from app.tools.registry import Toolbox
+from app.tools.salesforce import format_slot_label
 from app.tools.vonage import VonageClient
+
+# Paging for real-availability slots (availability-slots.md): show PAGE_SIZE real slots per card; a
+# tap on MORE_SLOT pages to the next PAGE_SIZE. MORE_SLOT is a reserved slotId (never a real
+# slot), so `execute` routes it back to a fresh offer instead of booking.
+PAGE_SIZE = 2
+MORE_SLOT = "__more__"
 
 log = get_logger("graph")
 
@@ -156,6 +163,8 @@ class GraphState(TypedDict, total=False):
     executed: dict[str, Any]
     status: str
     note: str
+    slotPage: int                 # which page of real slots is shown (0-based; "See other times")
+    slotsAuthority: str           # "scheduler" (real FSL slots) | "fallback" (canned)
     # Commerce (Step 6): the chosen chargeable part, the quote/order/payment-link, and the result.
     chosenPart: str
     quote: dict[str, Any]
@@ -244,6 +253,34 @@ def build_graph(
         reason = state["event"].get("reason", "technician_delay")
         proposal = propose(reason, state["context"], state.get("knowledgeSources", []))
         candidates = proposal.options
+        tools_used = state.get("toolsUsed", [])
+        # Real availability (availability-slots.md): ask Field Service for genuine bookable times
+        # and rebuild the options over them. The proposer still decides the PART + message; only the
+        # TIMES come from the scheduler. No real slots (unconfigured / tech full / error) → keep the
+        # canned slots, mark slotsAuthority="fallback" so the trace shows which won.
+        slots_authority = "fallback"
+        try:
+            real_slots = toolbox.call(
+                "scheduling.slots", appointmentId=state["event"]["appointmentId"]).data or []
+        except Exception as exc:  # noqa: BLE001 — scheduling is best-effort; never block recovery
+            log.info("graph.slots_unavailable", error=str(exc))
+            real_slots = []
+        if real_slots:
+            template = candidates[0] if candidates else {}
+            tech = (template.get("technician")
+                    or state["context"].get("technician", {}).get("name") or "your technician")
+            candidates = []
+            for i, s in enumerate(real_slots):
+                opt = {"slotId": f"slot-{i + 1}", "start": s["start"], "end": s["end"],
+                       "label": format_slot_label(s["start"], s["end"], settings.sf_timezone),
+                       "technician": tech, "note": template.get("note", "")}
+                if template.get("requiredSkill"):
+                    opt["requiredSkill"] = template["requiredSkill"]
+                if template.get("partNo"):
+                    opt["partNo"] = template["partNo"]  # same repair part rides every real slot
+                candidates.append(opt)
+            slots_authority = "scheduler"
+            tools_used = _add(tools_used, "scheduling.slots")
         # Fresh inventory snapshot every pass via the read tool, so a recompute after a lost race
         # sees the new stock. Record find_part as a real tool use when any candidate needs a part.
         part_nos = {c["partNo"] for c in candidates if c.get("partNo")}
@@ -252,11 +289,12 @@ def build_graph(
             for pn in part_nos
         }
         context = {**state["context"], "inventory": inv}
-        tools_used = _add(state.get("toolsUsed", []), "inventory.find_part") if part_nos \
-            else state.get("toolsUsed", [])
+        if part_nos:
+            tools_used = _add(tools_used, "inventory.find_part")
         log.info("graph.generate_options", reason=reason, candidates=len(candidates),
-                 provider=proposal.provider, degraded=proposal.degraded)
+                 provider=proposal.provider, degraded=proposal.degraded, slots=slots_authority)
         return {"candidates": candidates, "context": context, "toolsUsed": tools_used,
+                "slotsAuthority": slots_authority, "slotPage": 0,
                 "archetype": proposal.archetype, "llm_confidence": proposal.llm_confidence,
                 "explanation": proposal.explanation, "customerMessage": proposal.customer_message,
                 "llmProvider": proposal.provider,
@@ -290,6 +328,7 @@ def build_graph(
             "rateLimitNote": state.get("rateLimitNote"),
             "policyResult": result["policyResult"],
             "removed": result["removed"],
+            "slotsAuthority": state.get("slotsAuthority", "fallback"),
         }
         log.info("graph.policy_validate", valid=len(valid), result=result["policyResult"],
                  confidence=round(final, 4))
@@ -307,11 +346,22 @@ def build_graph(
         return {"approval": decision}
 
     def offer_to_customer(state: GraphState) -> GraphState:
+        # Paging (availability-slots.md): show PAGE_SIZE slots from the validated pool; the customer
+        # pages the rest with "See other times". Re-entered (new version) each time they page.
+        all_opts = state["options"]
+        page = max(0, state.get("slotPage", 0))
+        start_i = page * PAGE_SIZE
+        if start_i >= len(all_opts):  # defensive: a page request past the end wraps to the first
+            start_i, page = 0, 0
+        shown = all_opts[start_i:start_i + PAGE_SIZE]
         opts = [
             SlotOption(slotId=c["slotId"], label=c["label"], technician=c["technician"],
                        note=c.get("note", ""))
-            for c in state["options"]
+            for c in shown
         ]
+        if len(all_opts) > start_i + PAGE_SIZE:  # more real slots left → offer the pager
+            opts.append(SlotOption(slotId=MORE_SLOT, label="See other times", technician="",
+                                   note="Show more available slots"))
         version = state.get("version", 0) + 1
         # title = a short header; body = the AI-written, reason-aware message (slice 1). The LLM
         # wrote it (generate_options); the deterministic floor supplies it offline.
@@ -321,7 +371,7 @@ def build_graph(
                     actions=_offer_actions(state["context"], state.get("archetype", "delay")),
                     version=version)  # version → RCS postback (stale guard, NFR-6)
         sent = vonage.send_card(state["event"]["correlationId"], card)
-        log.info("graph.offer_to_customer", options=len(opts), version=version)
+        log.info("graph.offer_to_customer", options=len(opts), page=page, version=version)
         return {"card": card.model_dump(), "sent": sent, "version": version,
                 "status": "OPTIONS_SENT"}
 
@@ -338,6 +388,11 @@ def build_graph(
             log.info("graph.stale_reply", got=reply.get("version"), current=state.get("version"))
             return Command(goto="offer_to_customer",
                            update={"note": "stale reply rejected; current options re-sent"})
+
+        if reply.get("slotId") == MORE_SLOT:  # "See other times" → page forward, re-offer (no book)
+            log.info("graph.see_other_times", page=state.get("slotPage", 0) + 1)
+            return Command(goto="offer_to_customer",
+                           update={"slotPage": state.get("slotPage", 0) + 1})
 
         chosen = next((c for c in state["options"] if c["slotId"] == reply.get("slotId")), None)
         if chosen is None:
@@ -358,7 +413,9 @@ def build_graph(
         confirmed = toolbox.call("reschedule.confirm",
                                  appointmentId=state["event"]["appointmentId"],
                                  slotId=chosen["slotId"],
-                                 slotLabel=chosen["label"])  # the time info the real org needs
+                                 slotLabel=chosen["label"],  # canned slots: parsed to times
+                                 startTime=chosen.get("start"),  # real slots: exact instants
+                                 endTime=chosen.get("end"))
         if not confirmed.ok:
             log.info("graph.reschedule_refused", reason=confirmed.reason)
             return Command(goto="offer_to_customer",
