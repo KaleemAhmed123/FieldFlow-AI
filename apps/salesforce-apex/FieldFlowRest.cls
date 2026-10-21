@@ -13,6 +13,10 @@
  *   https://<yourdomain>.my.salesforce.com/services/apexrest/fieldflow/...
  *   GET  .../appointment/{id}   .../customer/{id}   .../asset/{id}   .../technician/{id}
  *   POST .../reschedule         body: {"appointmentId":"...","startTime":"ISO","endTime":"ISO"}
+ *   POST .../payment            body: {"paymentId":"...","paymentRef":"...","orderId":"...",
+ *                                      "amountPaise":123,"currency":"INR","status":"captured",
+ *                                      "appointmentId":"..."}  → upserts a FieldFlow_Payment__c
+ *                                      related to the appointment (idempotent on paymentId).
  *
  * The JSON shapes match app/tools/salesforce.py (FakeSalesforce) so our Python adapter is a thin swap.
  *
@@ -57,31 +61,66 @@ global with sharing class FieldFlowRest {
         res.addHeader('Content-Type', 'application/json');
         String path = RestContext.request.requestURI.substringAfter('/fieldflow/');
         try {
-            if (!path.startsWith('reschedule')) {
-                fail(res, 404, 'unknown action "' + path + '"');
-                return;
-            }
             Map<String, Object> payload =
                 (Map<String, Object>) JSON.deserializeUntyped(RestContext.request.requestBody.toString());
-            String apptId = (String) payload.get('appointmentId');
-            ServiceAppointment found = findAppointment(apptId);
-            if (found == null) { fail(res, 404, 'appointment "' + apptId + '" not found'); return; }
-            // The slotId -> start/end mapping is done in our Python adapter (we own the slot catalog),
-            // so this endpoint takes concrete times. Direct field update (handoff OQ-D) for the POC.
-            // Update a FRESH record with ONLY the id + the two time fields. Re-saving the whole queried
-            // record (AppointmentNumber/Status/ParentRecordId loaded) trips the Field Service field-
-            // access check in the integration session ("fields being inaccessible"); a minimal update
-            // carries only updatable fields and avoids it (matches a plain 2-field REST update).
-            ServiceAppointment sa = new ServiceAppointment(Id = found.Id);
-            sa.SchedStartTime = parseIso((String) payload.get('startTime'));
-            sa.SchedEndTime = parseIso((String) payload.get('endTime'));
-            update sa;
-            res.responseBody = Blob.valueOf(JSON.serialize(new Map<String, Object>{
-                'appointmentId' => apptId, 'status' => 'RESCHEDULED'
-            }));
+            if (path.startsWith('reschedule')) {
+                reschedule(res, payload);
+            } else if (path.startsWith('payment')) {
+                recordPayment(res, payload);
+            } else {
+                fail(res, 404, 'unknown action "' + path + '"');
+            }
         } catch (Exception e) {
-            fail(res, 500, e.getMessage());
+            fail(res, 500, e.getMessage());  // fail loud — the caller logs the body (golden rule)
         }
+    }
+
+    static void reschedule(RestResponse res, Map<String, Object> payload) {
+        String apptId = (String) payload.get('appointmentId');
+        ServiceAppointment found = findAppointment(apptId);
+        if (found == null) { fail(res, 404, 'appointment "' + apptId + '" not found'); return; }
+        // The slotId -> start/end mapping is done in our Python adapter (we own the slot catalog),
+        // so this endpoint takes concrete times. Direct field update (handoff OQ-D) for the POC.
+        // Update a FRESH record with ONLY the id + the two time fields. Re-saving the whole queried
+        // record (AppointmentNumber/Status/ParentRecordId loaded) trips the Field Service field-
+        // access check in the integration session ("fields being inaccessible"); a minimal update
+        // carries only updatable fields and avoids it (matches a plain 2-field REST update).
+        ServiceAppointment sa = new ServiceAppointment(Id = found.Id);
+        sa.SchedStartTime = parseIso((String) payload.get('startTime'));
+        sa.SchedEndTime = parseIso((String) payload.get('endTime'));
+        update sa;
+        res.responseBody = Blob.valueOf(JSON.serialize(new Map<String, Object>{
+            'appointmentId' => apptId, 'status' => 'RESCHEDULED'
+        }));
+    }
+
+    // Record a captured Razorpay payment as a FieldFlow_Payment__c related to the appointment.
+    // Idempotent: UPSERT on the external-id Payment_Id__c, so a retried capture updates the one row
+    // rather than creating a duplicate — matches the gateway's no-double-charge guarantee (NFR-2).
+    static void recordPayment(RestResponse res, Map<String, Object> payload) {
+        String paymentId = (String) payload.get('paymentId');
+        if (String.isBlank(paymentId)) { fail(res, 400, 'paymentId required'); return; }
+        FieldFlow_Payment__c p = new FieldFlow_Payment__c(
+            Payment_Id__c    = paymentId,
+            Payment_Ref__c   = (String) payload.get('paymentRef'),
+            Order_Id__c      = (String) payload.get('orderId'),
+            Amount_Paise__c  = toDecimal(payload.get('amountPaise')),
+            Currency_Code__c = (String) payload.get('currency'),
+            Status__c        = (String) payload.get('status')
+        );
+        String apptId = (String) payload.get('appointmentId');
+        if (String.isNotBlank(apptId)) {
+            ServiceAppointment sa = findAppointment(apptId);
+            if (sa != null) p.Service_Appointment__c = sa.Id;  // → related record on the appointment
+        }
+        upsert p Payment_Id__c;
+        res.responseBody = Blob.valueOf(JSON.serialize(new Map<String, Object>{
+            'paymentId' => paymentId, 'status' => 'RECORDED', 'recordId' => p.Id
+        }));
+    }
+
+    static Decimal toDecimal(Object o) {
+        return o == null ? null : Decimal.valueOf(String.valueOf(o));
     }
 
     // --- reads (shapes mirror FakeSalesforce) -------------------------------------------------
