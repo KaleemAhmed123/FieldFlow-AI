@@ -380,12 +380,17 @@ def build_graph(
     # gateway) lives in the commerce.* action tools — the LLM still only proposed which part.
     def build_quote(state: GraphState) -> GraphState:
         part_no = state["chosenPart"]
+        # Price from the e-com (inventory owns product price); None → commerce falls back to its
+        # in-code book. Recorded as a real tool use in the trace.
+        part_paise = toolbox.call("inventory.price", partNo=part_no).data
         quote = toolbox.call("commerce.create_quote",
-                             workOrderId=state["event"]["correlationId"], partNo=part_no).data
-        tools_used = _add(state.get("toolsUsed", []), "commerce.create_quote")
+                             workOrderId=state["event"]["correlationId"], partNo=part_no,
+                             partPaise=part_paise).data
+        tools_used = _add(state.get("toolsUsed", []), "inventory.price", "commerce.create_quote")
         decision = _commerce_trace(state, quote=quote)
         decision["reason"] = [*decision.get("reason", []),
-                              f"quote {rupees(quote['amountPaise'])} (authority: price_book)"]
+                              f"quote {rupees(quote['amountPaise'])} "
+                              f"(authority: {quote['priceAuthority']})"]
         log.info("graph.build_quote", amountPaise=quote["amountPaise"])
         return {"quote": quote, "toolsUsed": tools_used, "decision": decision,
                 "status": "QUOTE_BUILT"}

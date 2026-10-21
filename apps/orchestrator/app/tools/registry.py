@@ -124,6 +124,11 @@ def build_toolbox(
         lambda partNo: inventory.find_part(partNo),
         args=["partNo"], description="Live stock of a part per location (may be stale by execute).",
     )
+    tb.register(
+        "inventory.price", "read",
+        lambda partNo: inventory.price_paise(partNo),
+        args=["partNo"], description="The part's price (paise) from the e-com (quote authority).",
+    )
 
     # --- Action tools (validated; the function decides, may refuse) ---------------------------
     def reserve(partNo: str, qty: int = 1) -> ToolResult:
@@ -188,9 +193,10 @@ def build_toolbox(
     # check / gateway call) and returns a ToolResult that may refuse. Idempotency + audit + emit
     # stay in the service layer, so the graph nodes calling these stay DB-free.
     if commerce is not None and gateway is not None:
-        def create_quote(workOrderId: str, partNo: str) -> ToolResult:
-            # Price authority: the amount is computed from the book, never from the LLM.
-            quote = commerce.build_quote(workOrderId, partNo)
+        def create_quote(workOrderId: str, partNo: str, partPaise: int | None = None) -> ToolResult:
+            # Price authority: the e-com's price when given (partPaise), else the in-code book —
+            # never the LLM. The amount is always computed here.
+            quote = commerce.build_quote(workOrderId, partNo, part_paise=partPaise)
             if quote["amountPaise"] <= 0:
                 return ToolResult(ok=False, reason="quote amount must be positive")
             return ToolResult(ok=True, data=quote)
@@ -198,7 +204,7 @@ def build_toolbox(
         tb.register(
             "commerce.create_quote", "action", create_quote,
             args=["workOrderId", "partNo"],
-            description="Price a chargeable part + labour into a quote (price book is authority).",
+            description="Price a chargeable part + labour (e-com price, book fallback).",
         )
 
         def create_order(quote: dict) -> ToolResult:

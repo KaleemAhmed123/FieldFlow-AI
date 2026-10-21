@@ -36,24 +36,32 @@ class CommerceService:
         self.currency = currency
 
     def price_part(self, part_no: str) -> int:
-        """The authority: a part's price in paise, from the book (never from the LLM)."""
+        """The fallback authority: a part's price in paise, from the in-code book (not the LLM)."""
         return PRICE_BOOK_PAISE.get(part_no, DEFAULT_PART_PRICE_PAISE)
 
-    def build_quote(self, work_order_id: str, part_no: str) -> dict:
-        """Price a chargeable part + labour into a quote. Amount is computed, never trusted."""
-        part_paise = self.price_part(part_no)
+    def build_quote(
+        self, work_order_id: str, part_no: str, part_paise: int | None = None
+    ) -> dict:
+        """Price a chargeable part + labour into a quote. The amount is computed, never trusted.
+
+        `part_paise` is the live price from the inventory service (e-com) when known — that's the
+        real authority. When it's None (part not in the e-com), we fall back to the in-code price
+        book. `priceAuthority` on the quote records which one priced it (show-your-work)."""
+        if part_paise is not None:
+            authority = "ecom"
+        else:
+            part_paise, authority = self.price_part(part_no), "price_book"
         lines = [
             {"desc": f"Part {part_no}", "partNo": part_no, "amountPaise": part_paise},
             {"desc": "Labour", "amountPaise": self.labour_paise},
         ]
-        amount = part_paise + self.labour_paise
         return {
             "quoteId": f"qt_{uuid.uuid4().hex[:12]}",
             "workOrderId": work_order_id,
             "lines": lines,
-            "amountPaise": amount,
+            "amountPaise": part_paise + self.labour_paise,
             "currency": self.currency,
-            "priceAuthority": "price_book",  # show-your-work: the amount came from the book
+            "priceAuthority": authority,
         }
 
     def create_order(self, quote: dict) -> dict:
@@ -77,6 +85,10 @@ if __name__ == "__main__":  # ponytail self-check: the price authority computes,
     svc = CommerceService(labour_paise=50000, currency="INR")
     q = svc.build_quote("WO-1", "CAP-492")
     assert q["amountPaise"] == 320000 + 50000, "amount must be book part price + labour"
+    assert q["priceAuthority"] == "price_book"
+    # e-com price wins when supplied, and is recorded as the authority
+    qe = svc.build_quote("WO-1", "CAP-492", part_paise=299900)
+    assert qe["amountPaise"] == 299900 + 50000 and qe["priceAuthority"] == "ecom"
     assert svc.price_part("UNLISTED") == DEFAULT_PART_PRICE_PAISE
     assert svc.create_order(q)["amountPaise"] == q["amountPaise"]
     # Print paise (ASCII) not the ₹ string — a Windows cp1252 console can't encode ₹.

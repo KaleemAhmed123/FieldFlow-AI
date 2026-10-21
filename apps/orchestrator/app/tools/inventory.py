@@ -18,6 +18,7 @@ log = get_logger("inventory")
 class InventoryTools(Protocol):
     def find_part(self, part_no: str) -> list[dict]: ...
     def reserve(self, part_no: str, qty: int = 1) -> bool: ...
+    def price_paise(self, part_no: str) -> int | None: ...
 
 
 class FakeInventory:
@@ -44,6 +45,13 @@ class FakeInventory:
     def set_stock(self, part_no: str, qty: int) -> None:
         """Force total stock for a part (demo 'parts grabbed by another case' button)."""
         self._stock[part_no] = [{"location": "Noida", "qty": qty}]
+
+    def price_paise(self, part_no: str) -> int | None:
+        """The part's price from the catalog (the e-com's seed source). None if unknown."""
+        from app.data.catalog import find_part
+
+        p = find_part(part_no)
+        return p["pricePaise"] if p else None
 
 
 class RestInventory:
@@ -91,6 +99,15 @@ class RestInventory:
                       body=resp.text)
         resp.raise_for_status()
         return bool(resp.json().get("ok", False))
+
+    def price_paise(self, part_no: str) -> int | None:
+        """The part's price from the e-com (GET /api/stock returns pricePaise alongside stock). None
+        if the service doesn't know the part — commerce then falls back to its own book."""
+        resp = self._get_client().get(f"{self._base}/api/stock/{part_no}")
+        if resp.status_code >= 400:
+            log.error("ecom.price_rejected", part_no=part_no, status=resp.status_code)
+            return None
+        return resp.json().get("pricePaise")
 
 
 def build_inventory(settings: Any) -> InventoryTools:

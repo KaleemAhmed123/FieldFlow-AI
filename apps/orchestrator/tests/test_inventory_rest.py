@@ -42,6 +42,22 @@ def test_reserve_ok_and_refusal() -> None:
     assert inv.reserve("GONE") is False         # lost the race → refusal, not an oversell (NFR-5)
 
 
+def test_rest_price_reads_pricepaise_from_ecom() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        assert request.url.path == "/api/stock/CAP-492"
+        return httpx.Response(
+            200, json={"partNo": "CAP-492", "locations": [], "pricePaise": 299900})
+
+    inv = RestInventory("http://ecom.test", client=_client(handler))
+    assert inv.price_paise("CAP-492") == 299900
+
+
+def test_fake_price_from_catalog_and_none_for_unknown() -> None:
+    inv = FakeInventory()
+    assert inv.price_paise("CAP-492") == 320000   # the catalog price (e-com's seed source)
+    assert inv.price_paise("NOPE-000") is None     # unknown → commerce falls back to its book
+
+
 def test_build_inventory_is_mock_first() -> None:
     assert isinstance(build_inventory(Settings(ecom_api_url="")), FakeInventory)
     assert isinstance(build_inventory(Settings(ecom_api_url="http://ecom.test")), RestInventory)
