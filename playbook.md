@@ -233,9 +233,11 @@ uv run pytest -q tests/test_llm.py tests/test_confidence.py
 RCS via a Razorpay page, then we capture and confirm.* Mock-first: `FakeRazorpay` behind a
 `PaymentGateway` seam (blank `RAZORPAY_KEY_*` → the fake, offline). Money is integer **paise**.
 
-**The one rule for money:** the LLM proposes *which part*; the **price book** (`app/commerce/
-service.py`) decides the **amount**. Every money step (quote/order/payment/refund) is an action tool
-that runs the ladder and may refuse. **No double-charge** is guaranteed twice: idempotent capture at
+**The one rule for money:** the LLM proposes *which part*; the **price** decides the **amount** — from
+the **e-com inventory** (`GET /api/stock/{partNo}` → `pricePaise`), falling back to the in-code price
+book (`app/commerce/service.py`) when the e-com doesn't know the part. The quote's `priceAuthority`
+records which one (`ecom` / `price_book`). Every money step (quote/order/payment/refund) is an action
+tool that runs the ladder and may refuse. **No double-charge** is guaranteed twice: idempotent capture at
 the gateway (keyed by paymentId) + envelope dedupe on the payment `eventId`.
 
 **What makes a job chargeable:** the chosen option needs a part AND (asset out of warranty OR
