@@ -46,6 +46,26 @@ async def health_deps(request: Request, deep: bool = False) -> dict:
     )
 
 
+@router.get("/version")
+async def version() -> dict:
+    """The git commit the running process was built from — so "is the live deploy current?" is a
+    one-curl check (the stale-deploy bug that 422'd every payment card). Render auto-injects
+    RENDER_GIT_COMMIT/RENDER_GIT_BRANCH; locally we fall back to `git rev-parse` (best-effort)."""
+    import os
+    import subprocess
+
+    commit = os.getenv("RENDER_GIT_COMMIT")
+    branch = os.getenv("RENDER_GIT_BRANCH")
+    if not commit:
+        try:
+            commit = subprocess.check_output(
+                ["git", "rev-parse", "HEAD"], stderr=subprocess.DEVNULL, text=True
+            ).strip()
+        except Exception:  # noqa: BLE001 — no git / not a repo in the container → unknown
+            commit = "unknown"
+    return {"commit": commit, "shortCommit": (commit or "")[:7], "branch": branch or "unknown"}
+
+
 @router.get("/metrics")
 async def metrics() -> Response:
     return Response(generate_latest(), media_type=CONTENT_TYPE_LATEST)
