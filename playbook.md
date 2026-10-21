@@ -81,6 +81,7 @@ Health check once `make dev` is up:
 
 ```bash
 curl http://localhost:8000/health        # {"status":"ok"}  — cheap liveness, never hits the network
+curl http://localhost:8000/version       # {"commit","shortCommit","branch"} — is the LIVE deploy current?
 curl http://localhost:8000/tools         # the controlled tool surface (reads vs actions)  ← Step 2
 curl http://localhost:8000/health/deps   # deep dep health (cheap: DB+queue only)           ← Step 10
 curl "http://localhost:8000/health/deps?deep=1"  # + real vendor pings (groq/gemini models.list, jina HEAD)
@@ -545,6 +546,35 @@ uv run --with simple-salesforce python apps/salesforce-apex/seed_demo_data.py --
 - Live calls are **untested against a real org** until you deploy + seed. The seed script fails loud
   with Salesforce's exact error (usually a missing field/permission) — paste it back and we adjust.
 - Write-up: [`build-step-12-real-mcp-and-observability.md`](docs/specs/field-service-recovery/build-step-12-real-mcp-and-observability.md) §7.
+
+### Payment write-back → FieldFlow_Payment__c (spec: `docs/specs/sf-payment-object.md`)
+
+*A captured Razorpay payment is now written to Salesforce as a `FieldFlow_Payment__c` record linked
+to the ServiceAppointment. One POST endpoint on the SAME Apex class, idempotent (upsert on the
+Razorpay paymentId). `deploy_sf.py` uses the `SF_*` creds — no `sf` CLI, no new deps.*
+
+```bash
+# From the repo root, with SF_* creds in apps/orchestrator/.env:
+# 1) create the object + its 7 fields (Metadata API for the object, Tooling API for the fields):
+uv run python apps/salesforce-apex/deploy_sf.py --payment
+# 2) redeploy the Apex class (now compiles — it references the new object):
+uv run python apps/salesforce-apex/deploy_sf.py apps/salesforce-apex/FieldFlowRest.cls
+# 3) grant the integration user FLS on the new object/fields (else the write 500s "inaccessible"):
+uv run python apps/salesforce-apex/deploy_sf.py --payment-perms
+# 4) smoke-test the live endpoint (get $TOKEN as in README §5):
+curl -X POST -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" \
+  "https://<yourdomain>.my.salesforce.com/services/apexrest/fieldflow/payment" \
+  -d '{"paymentId":"pay_demo1","paymentRef":"plink_x","orderId":"ord_x","amountPaise":370000,"currency":"INR","status":"captured","appointmentId":"SA-0003"}'
+# → {"paymentId":"pay_demo1","status":"RECORDED","recordId":"a0X..."}  (same paymentId again = same row)
+```
+
+- **Live-verified 2026-10-21** in `astreait88-dev-ed`: object + 7 fields + the updated `FieldFlowRest`
+  class deployed, FLS granted via the dedicated `FieldFlow_Payment_Access` permission set, and a POST
+  round-trip confirmed (record created + linked to SA-0001; repeat = same row, idempotent).
+  NB: the profile has Modify All Data, so `--payment-perms` uses a dedicated permission set (it can't
+  add object perms to a MAD profile).
+- In the pipeline this fires automatically in `settle_payment` (graph) via the `salesforce.record_payment`
+  tool — best-effort (money is already captured, so a SF write hiccup never strands the paid case).
 
 ## 3j. Admin copilot: Salesforce Hosted MCP (build step 12 Task 4)
 
