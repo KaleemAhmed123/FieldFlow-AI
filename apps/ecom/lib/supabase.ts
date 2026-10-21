@@ -88,6 +88,18 @@ export async function stockFor(partNo: string): Promise<StockRow[]> {
   return (data ?? []).map((r) => ({ location: r.location, qty: r.qty }));
 }
 
+// A part's price in paise (the orchestrator quotes from this, not a hardcoded book). null if unknown.
+export async function priceFor(partNo: string): Promise<number | null> {
+  const sb = getSupabase();
+  const { data, error } = await sb
+    .from("ecom_products")
+    .select("price_paise")
+    .eq("part_no", partNo)
+    .maybeSingle();
+  if (error) throw error;
+  return data ? data.price_paise : null;
+}
+
 // Atomic reserve via the SQL function — the whole point is that a lost race returns false.
 export async function reserve(partNo: string, qty: number): Promise<boolean> {
   const sb = getSupabase();

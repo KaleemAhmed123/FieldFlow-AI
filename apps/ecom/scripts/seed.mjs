@@ -76,7 +76,11 @@ for (const model of catalog.models) {
       image_url: imageUrl(model),
     });
     const qty = seedQty(p);
+    // Three locations mirror the SF service territories (Noida / Gurgaon / Delhi). Noida is primary;
+    // Gurgaon carries a secondary buffer ("in stock elsewhere"); Delhi stays 0 (the race/empty
+    // location). Scarce parts stay Noida-only at 1 so the NFR-5 race still fires.
     stock.push({ part_no: p.partNo, location: "Noida", qty });
+    stock.push({ part_no: p.partNo, location: "Gurgaon", qty: p.scarce ? 0 : Math.ceil(qty / 2) });
     stock.push({ part_no: p.partNo, location: "Delhi", qty: 0 });
   }
 }
