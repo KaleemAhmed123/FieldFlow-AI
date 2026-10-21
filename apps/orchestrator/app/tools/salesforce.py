@@ -40,6 +40,9 @@ class SalesforceTools(Protocol):
     def reschedule(
         self, appointment_id: str, slot_id: str, slot_label: str | None = None
     ) -> dict: ...
+    def record_payment(
+        self, receipt: dict, appointment_id: str | None = None
+    ) -> dict: ...
 
 
 class FakeSalesforce:
@@ -49,6 +52,7 @@ class FakeSalesforce:
         # Step 7b: flip this (via /sim/fault) to simulate Salesforce being down — every read then
         # raises, the consumer handler fails, and the message dead-letters to events.dlq.
         self.down: bool = False
+        self._payments: dict[str, dict] = {}  # paymentId -> stored payment (idempotent by key)
         self._appointments: dict[str, dict] = {
             "SA-19281": {
                 "appointmentId": "SA-19281",
@@ -112,6 +116,14 @@ class FakeSalesforce:
         `slot_label` is ignored here — it only matters to RestSalesforce, which turns it into the
         concrete start/end times the real org needs."""
         return {"appointmentId": appointment_id, "slotId": slot_id, "status": "RESCHEDULED"}
+
+    def record_payment(self, receipt: dict, appointment_id: str | None = None) -> dict:
+        """Store a captured payment in the in-memory demo org. Idempotent by paymentId — a retried
+        capture overwrites the same key (mirrors RestSalesforce's external-id upsert)."""
+        self._guard()
+        payment_id = receipt.get("paymentId")
+        self._payments[payment_id] = {**receipt, "appointmentId": appointment_id}
+        return {"paymentId": payment_id, "status": "RECORDED", "recordId": payment_id}
 
 
 # --- Real org via the Apex REST surface (build step 12) ---------------------------------------
@@ -254,6 +266,24 @@ class RestSalesforce:
         resp.raise_for_status()
         # Keep slotId in the result so `executed` looks the same as the fake's shape to the panel.
         return {"slotId": slot_id, **resp.json()}
+
+    def record_payment(self, receipt: dict, appointment_id: str | None = None) -> dict:
+        """POST the captured payment to the Apex `/payment` endpoint, which upserts a
+        FieldFlow_Payment__c on Payment_Id__c (idempotent) and links it to the appointment."""
+        body = {
+            "paymentId": receipt.get("paymentId"),
+            "paymentRef": receipt.get("paymentRef"),
+            "orderId": receipt.get("orderId"),
+            "amountPaise": receipt.get("amountPaise"),
+            "currency": receipt.get("currency"),
+            "status": receipt.get("status"),
+            "appointmentId": appointment_id,
+        }
+        resp = self._call("POST", "/services/apexrest/fieldflow/payment", json=body)
+        if resp.status_code >= 400:
+            log.error("salesforce.payment_rejected", status=resp.status_code, body=resp.text)
+        resp.raise_for_status()
+        return resp.json()
 
 
 def build_salesforce(settings: Any) -> SalesforceTools:

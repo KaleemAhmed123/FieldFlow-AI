@@ -443,11 +443,30 @@ def build_graph(
             return Command(goto="offer_payment",
                            update={"note": f"payment not completed ({res.reason}); re-offered"})
         receipt = res.data
+        # Write the payment back to Salesforce as an appointment-linked record. Best-effort: the
+        # money is already captured, so a SF write hiccup must NOT strand the paid case or 500 the
+        # resume — log it onto the trace and still close. The write is idempotent at the org.
+        tools_used = state.get("toolsUsed", [])
+        try:
+            rec = toolbox.call(
+                "salesforce.record_payment",
+                paymentId=receipt.get("paymentId"), paymentRef=receipt.get("paymentRef"),
+                orderId=state["order"]["orderId"], amountPaise=state["order"]["amountPaise"],
+                currency=state["order"]["currency"], status=receipt.get("status"),
+                appointmentId=state["event"]["appointmentId"],
+            )
+            tools_used = _add(tools_used, "salesforce.record_payment")
+            payment_record = rec.data if rec.ok else {"error": rec.reason}
+        except Exception as exc:  # noqa: BLE001 — captured already; never block the close on a SF write
+            log.error("graph.settle_payment.record_failed", error=str(exc))
+            payment_record = {"error": str(exc)}
         decision = _commerce_trace(state, payment=receipt)
+        decision["paymentRecord"] = payment_record
         log.info("graph.settle_payment", paymentRef=link_id,
                  alreadyCaptured=receipt.get("alreadyCaptured"))
         return Command(goto="verify",
-                       update={"captured": receipt, "decision": decision, "status": "PAID"})
+                       update={"captured": receipt, "decision": decision,
+                               "toolsUsed": tools_used, "status": "PAID"})
 
     def verify(state: GraphState) -> GraphState:
         # Close the loop with a confirmation card (slice 3): archetype-aware body + Add-to-Calendar

@@ -161,6 +161,28 @@ def build_toolbox(
         description="Apply a chosen slot after the ladder. Refuses on unknown/terminal case.",
     )
 
+    def record_payment(
+        paymentId: str, paymentRef: str | None = None, orderId: str | None = None,
+        amountPaise: int | None = None, currency: str | None = None,
+        status: str | None = None, appointmentId: str | None = None,
+    ) -> ToolResult:
+        # A SF write, not the LLM's call: records the captured payment as a related record on the
+        # appointment. Idempotent at the org via the external-id upsert, so a retry is safe.
+        if not paymentId:
+            return ToolResult(ok=False, reason="record_payment needs a paymentId")
+        data = salesforce.record_payment(
+            {"paymentId": paymentId, "paymentRef": paymentRef, "orderId": orderId,
+             "amountPaise": amountPaise, "currency": currency, "status": status},
+            appointment_id=appointmentId,
+        )
+        return ToolResult(ok=True, data=data)
+
+    tb.register(
+        "salesforce.record_payment", "action", record_payment,
+        args=["paymentId"],
+        description="Write a captured payment to Salesforce as an appointment-linked record.",
+    )
+
     # --- Commerce action tools (Step 6; only if a price authority + gateway were wired) ---------
     # Every one is a MUTATION that climbs the ladder in the tool layer (price authority / amount
     # check / gateway call) and returns a ToolResult that may refuse. Idempotency + audit + emit

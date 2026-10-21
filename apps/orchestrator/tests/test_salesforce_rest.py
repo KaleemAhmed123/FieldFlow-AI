@@ -148,6 +148,38 @@ def test_reschedule_without_label_fails_loud() -> None:
         sf.reschedule("SA-19281", "t-today-1")  # no label → can't know the time
 
 
+# --- record_payment (the second mutation) ----------------------------------------------------
+
+def test_record_payment_posts_and_links_appointment() -> None:
+    sent = {}
+
+    def handler(req: httpx.Request) -> httpx.Response:
+        if req.url.path == TOKEN_PATH:
+            return _token_response()
+        assert req.method == "POST" and req.url.path == f"{APEX}/payment"
+        import json as _json
+        sent.update(_json.loads(req.content))
+        return httpx.Response(200, json={"paymentId": sent["paymentId"], "status": "RECORDED",
+                                         "recordId": "a0X000000000001"})
+
+    sf = _rest(handler)
+    out = sf.record_payment(
+        {"paymentId": "pay_1", "paymentRef": "plink_1", "orderId": "ord_1",
+         "amountPaise": 370000, "currency": "INR", "status": "captured"},
+        appointment_id="SA-19281",
+    )
+    assert sent["paymentId"] == "pay_1" and sent["amountPaise"] == 370000
+    assert sent["appointmentId"] == "SA-19281"  # the link the org resolves to a lookup
+    assert out["status"] == "RECORDED"
+
+
+def test_fake_record_payment_is_idempotent_by_payment_id() -> None:
+    sf = FakeSalesforce()
+    sf.record_payment({"paymentId": "pay_1", "amountPaise": 370000}, appointment_id="SA-19281")
+    sf.record_payment({"paymentId": "pay_1", "amountPaise": 370000}, appointment_id="SA-19281")
+    assert len(sf._payments) == 1  # a repeat updates the one row, never duplicates
+
+
 # --- the arming gate -------------------------------------------------------------------------
 
 def test_build_salesforce_is_fake_when_unarmed() -> None:
