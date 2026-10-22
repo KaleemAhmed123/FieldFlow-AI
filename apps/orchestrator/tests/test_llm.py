@@ -13,8 +13,10 @@ from app.llm.proposer import (
     Proposer,
     RateLimited,
     build_proposer,
+    customer_message_for,
     deterministic_proposal,
     parse_proposal,
+    sanitize_customer_message,
 )
 
 CTX = {"technician": {"name": "Rahul", "skills": ["daikin-inverter"]}}
@@ -107,6 +109,24 @@ def test_parse_keeps_the_models_customer_message():
            '"explanation":"x","customer_message":"Hi! Sorry for the delay."}')
     assert parse_proposal(raw, "groq", "technician_delay", CTX).customer_message \
         == "Hi! Sorry for the delay."
+
+
+def test_parse_blocks_a_money_promise_and_uses_the_template():
+    # AI-BEH-02: the model tries to promise "free" — not authorized → swapped for the template.
+    raw = ('{"options":[{"slotId":"s","label":"L","technician":"R"}],"confidence":0.8,'
+           '"explanation":"x","customer_message":"Great news, this repair is completely free!"}')
+    msg = parse_proposal(raw, "groq", "technician_delay", CTX).customer_message
+    assert "free" not in msg.lower()
+    assert msg == customer_message_for("technician_delay", CTX)  # fell back to the template
+
+
+def test_sanitize_customer_message_rules():
+    fb = "SAFE FALLBACK"
+    assert sanitize_customer_message("Sorry, pick a slot below.", fb) == "Sorry, pick a slot below."
+    assert sanitize_customer_message("It's totally free!", fb) == fb        # money claim
+    assert sanitize_customer_message("We'll add a ₹500 discount", fb) == fb  # currency + discount
+    assert sanitize_customer_message("   ", fb) == fb                        # empty/whitespace
+    assert sanitize_customer_message("x" * 600, fb) == fb                    # too long
 
 
 # --- build_proposer wiring from settings -------------------------------------------------------
