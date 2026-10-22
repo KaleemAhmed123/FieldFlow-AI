@@ -7,7 +7,7 @@ venv/
 .pytest_cache/
 .ruff_cache/
 .mypy_cache/
-uv.lock
+# uv.lock IS committed (reproducible builds + CI `uv sync --locked`). Do not ignore it.
 
 # Node
 node_modules/
@@ -30,6 +30,9 @@ Thumbs.db
 .idea/
 .vscode/*
 !.vscode/extensions.json
+
+# CI pip-audit scratch (uv export output)
+audit-reqs.txt
 
 # Data
 *.sqlite3

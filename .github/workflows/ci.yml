@@ -1,0 +1,41 @@
+name: CI
+
+# Run the orchestrator's lint + tests on every push and PR, and scan deps for known CVEs.
+# Python 3.12 to match the Docker deploy image (apps/orchestrator/Dockerfile), not just the >=3.11 floor.
+on:
+  push:
+  pull_request:
+
+jobs:
+  test:
+    name: ruff + pytest (orchestrator)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          python-version: "3.12"
+          enable-cache: true
+
+      # --locked fails if uv.lock is out of sync with pyproject (proves the committed lock is honest).
+      # --all-extras pulls the orchestrator's `dev` extra (pytest, ruff).
+      - name: Install dependencies (locked)
+        run: uv sync --locked --all-extras
+
+      - name: Lint
+        working-directory: apps/orchestrator
+        run: uv run --all-extras ruff check .
+
+      - name: Tests
+        working-directory: apps/orchestrator
+        run: uv run --all-extras pytest -q
+
+      # Non-blocking for now: reports known CVEs in the locked deps without walling off merges over a
+      # transitive advisory. Flip `continue-on-error` to false once the report is clean.
+      - name: Security audit (pip-audit, non-blocking)
+        continue-on-error: true
+        run: |
+          uv export --locked --all-packages --no-emit-workspace --format requirements-txt > audit-reqs.txt
+          uvx pip-audit -r audit-reqs.txt
