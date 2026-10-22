@@ -6,7 +6,7 @@ from __future__ import annotations
 
 from app.db.models import Case
 from app.services import case_service
-from app.tools.salesforce import format_slot_label
+from app.tools.salesforce import format_slot_label, slot_time_fields
 from fieldflow_contract import make_event
 from sqlalchemy import select
 
@@ -60,6 +60,36 @@ async def test_real_slots_paginate_and_book(sessionmaker, salesforce, vonage, gr
             s, "WO-SLOTS", {"slotId": "slot-3", "version": 2}, graph=graph
         )
     assert (await _case(sessionmaker, "WO-SLOTS")).status == "CLOSED"
+
+
+def test_slot_time_fields_hour_and_unparseable() -> None:
+    # AI-BEH-01: real ISO slot 09:00 UTC → 14:30 Asia/Kolkata → hour 14.
+    tf = slot_time_fields(start="2026-11-01T09:00:00.000+0000", label=None, tz_name="Asia/Kolkata")
+    assert tf is not None and tf["hour"] == 14
+    # A canned label is read in the business tz: "TOMORROW 10:00-12:00" → hour 10.
+    label_tf = slot_time_fields(start=None, label="TOMORROW 10:00-12:00", tz_name="Asia/Kolkata")
+    assert label_tf is not None and label_tf["hour"] == 10
+    # Neither / malformed → None, so the caller drops the slot instead of booking a garbage time.
+    assert slot_time_fields(start=None, label="whenever suits", tz_name="Asia/Kolkata") is None
+    assert slot_time_fields(start=None, label=None, tz_name="Asia/Kolkata") is None
+
+
+async def test_out_of_hours_real_slot_is_rejected(sessionmaker, salesforce, vonage, graph) -> None:
+    # AI-BEH-01: one in-hours opening (09:00 UTC = 14:30 IST) + one at 20:00 UTC (= 01:30 IST next
+    # day). Policy's working-hours check (now fed real data) must drop the 01:30 one.
+    salesforce._slots = [
+        {"start": "2026-11-01T09:00:00.000+0000",
+         "end": "2026-11-01T11:00:00.000+0000", "grade": 90},
+        {"start": "2026-11-01T20:00:00.000+0000",
+         "end": "2026-11-01T22:00:00.000+0000", "grade": 80},
+    ]
+    event = make_event(work_order_id="WO-HOURS", reason="technician_delay")
+    async with sessionmaker() as s:
+        await case_service.handle_event(s, event, graph=graph)
+
+    case = await _case(sessionmaker, "WO-HOURS")
+    assert case.status == "OPTIONS_SENT"
+    assert [o["slotId"] for o in case.sent_card["card"]["options"]] == ["slot-1"]
 
 
 async def test_no_real_slots_falls_back_to_canned(sessionmaker, salesforce, vonage, graph) -> None:

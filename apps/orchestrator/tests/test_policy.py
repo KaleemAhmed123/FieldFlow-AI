@@ -33,6 +33,22 @@ def test_removes_wrong_skill_and_outside_sla_keeps_valid():
     assert "SLA" in removed["late"]
 
 
+def test_removes_out_of_hours_and_past_keeps_in_hours():
+    # AI-BEH-01: with `hour` / `startMinutes` now fed in, the once-dormant checks fire.
+    candidates = [
+        {"slotId": "ok", "label": "x", "technician": "Rahul", "hour": 14},        # in working hours
+        {"slotId": "night", "label": "x", "technician": "Rahul", "hour": 2},      # 2 a.m. → out
+        {"slotId": "past", "label": "x", "technician": "Rahul", "startMinutes": -30},  # past
+    ]
+
+    valid, result = policy.validate_options(candidates, _context())
+
+    assert [c["slotId"] for c in valid] == ["ok"]
+    removed = {r["slotId"]: r["reason"] for r in result["removed"]}
+    assert "working hours" in removed["night"]
+    assert "past" in removed["past"]
+
+
 def test_all_invalid_is_denied():
     valid, result = policy.validate_options(
         [{"slotId": "p", "label": "x", "technician": "R", "partNo": "CAP-492"}],
