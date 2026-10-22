@@ -23,6 +23,7 @@ from fieldflow_contract import AppointmentAtRisk
 
 from app import payment_poller
 from app.api.routes import router as api_router
+from app.auth import ApiKeyMiddleware
 from app.commerce import router as commerce_router
 from app.commerce.razorpay import RazorpayGateway, build_gateway
 from app.commerce.service import CommerceService
@@ -168,6 +169,10 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(title="FieldFlow AI — Orchestrator", version="0.1.0", lifespan=lifespan)
+# Order matters: add auth first, CORS last, so CORS is the OUTERMOST layer — it answers the browser
+# preflight and stamps CORS headers onto the auth gate's 401s (else the panel sees a CORS error, not
+# a clean 401). The API-key gate (AI-SEC-01) runs on every non-allowlisted request.
+app.add_middleware(ApiKeyMiddleware, api_key=settings.api_key)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=[settings.panel_origin],

@@ -11,6 +11,12 @@ class Settings(BaseSettings):
     app_env: str = "local"
     log_level: str = "INFO"
 
+    # API-key gate (AI-SEC-01). One shared secret in the `X-API-Key` header protects every route
+    # except the monitor allowlist (/health, /ready, /health/deps, /version, /metrics). Blank → the
+    # gate is OFF (local/dev, same mock-first convention as every other secret); set it on Render +
+    # in the panel's VITE_API_KEY to turn it on. P0-6 will make a blank key fatal in production.
+    api_key: str = ""
+
     # Default to a local SQLite file so a bare `uvicorn` run works without Postgres.
     # docker-based dev overrides this via .env with the Postgres URL. (Tests use their own engine.)
     database_url: str = "sqlite+aiosqlite:///./fieldflow_dev.db"
