@@ -112,7 +112,7 @@ export const customerReply = (body: { correlationId: string; slotId: string; ver
   USE_FIXTURES ? fixtureBackend.customerReply(body) : postJSON("/sim/customer-reply", body);
 
 export const approve = (body: { correlationId: string; approved: boolean }) =>
-  USE_FIXTURES ? fixtureBackend.approve(body) : postJSON("/sim/approve", body);
+  USE_FIXTURES ? fixtureBackend.approve(body) : postJSON("/ops/approve", body);
 
 export const payment = (body: {
   correlationId: string;
@@ -128,7 +128,7 @@ export const fault = (body: { salesforceDown: boolean }) =>
   USE_FIXTURES ? fixtureBackend.fault(body) : postJSON("/sim/fault", body);
 
 export const replayDlq = () =>
-  USE_FIXTURES ? fixtureBackend.replayDlq() : postJSON("/sim/dlq/replay", {});
+  USE_FIXTURES ? fixtureBackend.replayDlq() : postJSON("/ops/dlq/replay", {});
 
 // ---- Admin copilot (build step 14) -----------------------------------------
 // NL question -> Groq tool-calling over the SF + e-com MCP tools -> grounded answer. `toolsUsed` is
