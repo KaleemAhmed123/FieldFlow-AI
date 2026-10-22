@@ -10,6 +10,7 @@ ordering is unit-testable without any SDK installed.
 from __future__ import annotations
 
 import json
+import re
 from collections.abc import Callable
 from dataclasses import dataclass, field
 
@@ -81,6 +82,29 @@ def customer_message_for(reason: str, context: dict) -> str:
                 f"with you shortly.")
     return (f"Sorry — {tech} is running behind on your {model} service today. "
             f"Here are the earliest new slots I can offer. Tap one that works for you.")
+
+
+# AI-BEH-02: the reschedule message must NOT make money claims — pricing is the quote card's job,
+# never a chatty promise ("free under warranty", a discount, a made-up price). The deterministic
+# templates never use these words, so a tripped message safely falls back to one.
+_MONEY_CLAIM = re.compile(
+    r"\bfree\b|no charge|no cost|at no cost|won'?t cost|free of charge|complimentary"
+    r"|\bdiscount|\brefund|₹|\brs\.?\s*\d|\brupees?\b|\bprice\b|\bcost(?:s|ing|ed)?\b",
+    re.IGNORECASE,
+)
+_MESSAGE_MAX_LEN = 500
+
+
+def sanitize_customer_message(candidate: str, fallback: str) -> str:
+    """Keep the model's warm message only if it is safe to send a customer: no pricing/money claim
+    (AI-BEH-02), no control chars, bounded length, non-empty. Anything off → the deterministic
+    template (which never mentions money). A blocked message is cheap — the template reads fine."""
+    text = "".join(
+        ch for ch in (candidate or "") if ch in "\n\t" or (ch >= " " and ch != "\x7f")
+    ).strip()
+    if not text or len(text) > _MESSAGE_MAX_LEN or _MONEY_CLAIM.search(text):
+        return fallback
+    return text
 
 
 def deterministic_proposal(reason: str, context: dict) -> Proposal:
@@ -210,10 +234,12 @@ def parse_proposal(
             item.pop("partNo", None)  # ground out: delay needs no part; unknown parts are invented
         clean.append(item)
     conf = float(data.get("confidence", 0.0))
-    # Customer message: trust the model's if present, else fall back to our warm template so the RCS
-    # body is never empty (the model sometimes omits it; the deterministic copy always lands).
-    message = (str(data.get("customer_message", "")).strip()
-               or customer_message_for(reason, context or {}))
+    # Customer message: keep the model's only if it's safe (no money claims, bounded, clean), else
+    # fall back to our warm template — so the RCS body is never empty and never an unauthorized
+    # promise (AI-BEH-02). Pricing is the quote card's job, not this chatty line.
+    message = sanitize_customer_message(
+        str(data.get("customer_message", "")), customer_message_for(reason, context or {})
+    )
     return Proposal(
         options=clean, llm_confidence=max(0.0, min(1.0, conf)),
         explanation=str(data.get("explanation", "")).strip() or "(no explanation)",
