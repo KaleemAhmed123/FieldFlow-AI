@@ -18,12 +18,19 @@ def get_sessionmaker() -> async_sessionmaker:
 
 
 async def init_db() -> None:
-    """Create the engine and the tables. create_all is fine for the spine; alembic later."""
+    """Create the engine + session factory.
+
+    On Postgres (the real deploy) Alembic owns the schema — the Render start command runs
+    `alembic upgrade head` before the app boots, so we do NOT create_all here (it would race the
+    migrations and clash on the first ALTER). On SQLite (local dev + tests) there are no migrations,
+    so create_all still builds the tables.
+    """
     global _engine, _sessionmaker
     _engine = create_async_engine(settings.database_url, future=True)
     _sessionmaker = async_sessionmaker(_engine, expire_on_commit=False)
-    async with _engine.begin() as conn:
-        await conn.run_sync(Base.metadata.create_all)
+    if not settings.database_url.startswith("postgres"):
+        async with _engine.begin() as conn:
+            await conn.run_sync(Base.metadata.create_all)
 
 
 async def dispose_db() -> None:

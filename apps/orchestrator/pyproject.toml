@@ -31,6 +31,7 @@ dependencies = [
     "logfire[fastapi]>=5.1.1",
     "tzdata>=2024.1",  # IANA tz db for zoneinfo (Windows has none) — slot-label → UTC (step 12)
     "mcp>=1.2",         # MCP client SDK for the Salesforce Hosted MCP copilot path (step 12 Task 4)
+    "alembic>=1.20.1",
 ]
 
 [project.optional-dependencies]

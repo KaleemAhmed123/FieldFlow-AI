@@ -5,6 +5,9 @@ members = ["apps/orchestrator", "packages/contract"]
 [tool.ruff]
 line-length = 100
 target-version = "py311"
+# Alembic generates these files; linting machine output just fights the generator. env.py is
+# hand-written and stays linted.
+extend-exclude = ["**/alembic/versions"]
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "UP", "B"]
