@@ -24,6 +24,12 @@ class Settings(BaseSettings):
     # always mounted. (AI-SEC-01 / P0-2.)
     sim_enabled: bool = True
 
+    # Admin-copilot rate limits (AI-SEC-02 / P0-4). Each /copilot/chat call spends Groq tokens, so
+    # cap it: a per-minute burst limit (a human never hits 10; a runaway loop does) and a per-day
+    # budget that guards the Groq free tier. 0 disables either cap. In-process (single Render dyno).
+    copilot_rate_per_min: int = 10
+    copilot_rate_per_day: int = 200
+
     # Default to a local SQLite file so a bare `uvicorn` run works without Postgres.
     # docker-based dev overrides this via .env with the Postgres URL. (Tests use their own engine.)
     database_url: str = "sqlite+aiosqlite:///./fieldflow_dev.db"

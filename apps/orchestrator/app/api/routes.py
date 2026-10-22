@@ -10,13 +10,19 @@ from sqlalchemy import select
 
 from app.config import settings
 from app.copilot import build_groq_client, run_copilot
+from app.copilot.limit import CopilotLimiter
 from app.db.models import Case
 from app.db.secrets import SF_REFRESH_TOKEN_KEY, save_secret
 from app.db.session import get_sessionmaker
 from app.health import check_deps
+from app.logging import get_logger
 from app.reconcile import find_lingering
 
 router = APIRouter(tags=["api"])
+log = get_logger("api")
+
+# Shared in-process copilot rate limiter (AI-SEC-02 / P0-4). Built once from settings.
+_copilot_limiter = CopilotLimiter(settings.copilot_rate_per_min, settings.copilot_rate_per_day)
 
 
 # GET + HEAD: uptime monitors (UptimeRobot) probe with HEAD by default; a GET-only route 405s them.
@@ -137,6 +143,11 @@ async def copilot_chat(body: CopilotAsk, request: Request) -> dict:
         return {"available": False,
                 "detail": "No MCP tools armed — set SF_MCP_* (run `python -m app.mcp.login`) "
                           "and/or ECOM_API_URL."}
+    if not _copilot_limiter.allow():  # cost guard (P0-4): refuse before spending Groq tokens
+        log.info("copilot.rate_limited")
+        return {"available": True, "rateLimited": True, "toolsUsed": [],
+                "answer": "The copilot is busy right now (rate limit). "
+                          "Please wait a moment and try again."}
     result = await run_copilot(
         body.message, sources=sources,
         groq_client=build_groq_client(settings), model=settings.groq_model,
