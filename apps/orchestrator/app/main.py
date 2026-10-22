@@ -36,6 +36,7 @@ from app.graph.checkpointer import checkpointer_scope
 from app.llm.proposer import build_proposer
 from app.logging import configure_logging, get_logger
 from app.mcp import build_ecom_mcp_client, build_mcp_client
+from app.ops import router as ops_router
 from app.queue.broker import Broker
 from app.rag import make_knowledge_store
 from app.services import case_service
@@ -180,6 +181,10 @@ app.add_middleware(
     allow_headers=["*"],
 )
 app.include_router(api_router)
-app.include_router(sim_router)
+app.include_router(ops_router)  # real operator controls (approve, dlq replay) — always mounted
+if settings.sim_enabled:  # demo / offline-twin routes — dropped in production (SIM_ENABLED=false)
+    app.include_router(sim_router)
+else:
+    log.info("sim.disabled", reason="SIM_ENABLED=false — /sim/* not mounted")
 app.include_router(commerce_router)
 app.include_router(webhooks_router)

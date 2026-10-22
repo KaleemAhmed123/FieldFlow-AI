@@ -1,8 +1,11 @@
-"""Demo simulation endpoints — fire the events that a real Salesforce Pub/Sub would send.
+"""Demo / offline-twin endpoints — fire the events a real Salesforce / Vonage / Razorpay would send.
+
+These are SIMULATIONS and forge-able inputs, so they are mounted only when `SIM_ENABLED` is true and
+dropped in a real deployment (`SIM_ENABLED=false`). The genuine operator controls that must survive
+in production (human approval, DLQ replay) live in `app/ops/routes.py` (`/ops/*`), not here.
 
 POST /sim/appointment-at-risk  → publishes appointment.at_risk onto RabbitMQ.
 Re-POST with the same eventId → the consumer dedupes it (idempotency demo).
-POST /sim/approve        → resume a case paused for human approval (NFR-4, the operator tap).
 POST /sim/customer-reply → resume a case paused for the customer's choice (drives NFR-5/NFR-6).
 POST /sim/payment        → resume a case paused for payment: the customer paid (Step 6 commerce).
 """
@@ -15,7 +18,6 @@ from fastapi import APIRouter, HTTPException, Request
 from fieldflow_contract import Reason, make_event
 from pydantic import BaseModel, Field
 
-from app import telemetry
 from app.db.session import get_sessionmaker
 from app.services import case_service
 
@@ -45,21 +47,6 @@ async def fire_appointment_at_risk(body: AtRiskRequest, request: Request) -> dic
         raise HTTPException(status_code=503, detail="RabbitMQ unavailable — run `make up` first.")
     await broker.publish(event.event, event.model_dump(mode="json"))
     return {"published": True, "eventId": event.eventId, "correlationId": event.correlationId}
-
-
-class ApproveRequest(BaseModel):
-    correlationId: str
-    approved: bool = True
-
-
-@router.post("/approve")
-async def approve(body: ApproveRequest, request: Request) -> dict:
-    """The operator's Level-3 decision — resume a case paused at human_approval (NFR-4)."""
-    async with get_sessionmaker()() as session:
-        return await case_service.resume_case(
-            session, body.correlationId, {"approved": body.approved},
-            graph=request.app.state.graph,
-        )
 
 
 class ReplyRequest(BaseModel):
@@ -118,19 +105,6 @@ async def fault(body: FaultRequest, request: Request) -> dict:
     read raises, so a fired event fails processing and dead-letters to events.dlq."""
     request.app.state.salesforce.down = body.salesforceDown
     return {"salesforceDown": body.salesforceDown}
-
-
-@router.post("/dlq/replay")
-async def dlq_replay(request: Request) -> dict:
-    """Replay the parked messages back onto the main queue (Step 7b) — use after Salesforce is back
-    up. Returns how many were requeued."""
-    broker = request.app.state.broker
-    if broker is None:
-        raise HTTPException(status_code=503, detail="RabbitMQ unavailable — run `make up` first.")
-    count = await broker.replay_dlq()
-    for _ in range(count):
-        telemetry.dlq_replays.inc()
-    return {"replayed": count}
 
 
 class PaymentRequest(BaseModel):

@@ -17,6 +17,13 @@ class Settings(BaseSettings):
     # in the panel's VITE_API_KEY to turn it on. P0-6 will make a blank key fatal in production.
     api_key: str = ""
 
+    # Demo / offline-twin routes (`/sim/*`): fire fake events, toggle "Salesforce down", forge a
+    # customer reply/payment. Handy for demos + tests, but a forge/chaos surface you don't want on a
+    # real deployment. Default ON (nothing changes for current demos); set SIM_ENABLED=false in
+    # production so the router isn't mounted. The real operator controls live at `/ops/*` and are
+    # always mounted. (AI-SEC-01 / P0-2.)
+    sim_enabled: bool = True
+
     # Default to a local SQLite file so a bare `uvicorn` run works without Postgres.
     # docker-based dev overrides this via .env with the Postgres URL. (Tests use their own engine.)
     database_url: str = "sqlite+aiosqlite:///./fieldflow_dev.db"
