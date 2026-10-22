@@ -39,9 +39,12 @@ export interface DlqView {
 
 export const API = import.meta.env.VITE_API_URL ?? "http://localhost:8000";
 export const USE_FIXTURES = import.meta.env.VITE_USE_FIXTURES === "true";
+// The API-key gate (AI-SEC-01). Blank → no header (local/dev, matches the server's blank-key = off).
+const API_KEY = import.meta.env.VITE_API_KEY ?? "";
+const authHeaders = (): Record<string, string> => (API_KEY ? { "X-API-Key": API_KEY } : {});
 
 async function getJSON<T>(path: string): Promise<T> {
-  const r = await fetch(`${API}${path}`);
+  const r = await fetch(`${API}${path}`, { headers: authHeaders() });
   if (!r.ok) throw new Error(`GET ${path} -> ${r.status}`);
   return r.json() as Promise<T>;
 }
@@ -49,7 +52,7 @@ async function getJSON<T>(path: string): Promise<T> {
 async function postJSON<T>(path: string, body: unknown): Promise<T> {
   const r = await fetch(`${API}${path}`, {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: { "Content-Type": "application/json", ...authHeaders() },
     body: JSON.stringify(body ?? {}),
   });
   if (!r.ok) throw new Error(`POST ${path} -> ${r.status}`);
@@ -68,7 +71,7 @@ export const getDlq = (): Promise<DlqView> =>
 
 export async function getMetricsText(): Promise<string> {
   if (USE_FIXTURES) return fixtureBackend.getMetricsText();
-  const r = await fetch(`${API}/metrics`);
+  const r = await fetch(`${API}/metrics`, { headers: authHeaders() });
   if (!r.ok) throw new Error(`GET /metrics -> ${r.status}`);
   return r.text();
 }
