@@ -9,7 +9,7 @@ A candidate is a plain dict; only the keys present are checked, so a bare slot p
 and a richer slot is held to every rule it declares:
   slotId, label, technician, note,
   requiredSkill  — must be in technician.skills
-  startMinutes   — must be within context.slaWindowMinutes
+  startMinutes   — minutes from now to the slot; must be >= 0 (not past) and <= slaWindowMinutes
   hour           — must be inside working hours
   requiresWarranty — asset must be under active warranty
   partNo         — must have stock in context.inventory snapshot
@@ -39,8 +39,11 @@ def _removal_reason(cand: dict, context: dict) -> str | None:
         return f"technician lacks required skill '{rs}'"
 
     sla = context.get("slaWindowMinutes")
-    if (sm := cand.get("startMinutes")) is not None and sla is not None and sm > sla:
-        return f"start {sm}min breaches SLA window {sla}min"
+    if (sm := cand.get("startMinutes")) is not None:
+        if sm < 0:
+            return f"slot start is {-sm}min in the past"
+        if sla is not None and sm > sla:
+            return f"start {sm}min breaches SLA window {sla}min"
 
     if (h := cand.get("hour")) is not None and not (WORK_START_HOUR <= h < WORK_END_HOUR):
         return f"start hour {h} outside working hours {WORK_START_HOUR}-{WORK_END_HOUR}"

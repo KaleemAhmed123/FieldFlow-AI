@@ -35,7 +35,7 @@ from app.llm.proposer import Proposer, build_proposer
 from app.logging import get_logger
 from app.rag.store import KnowledgeStore
 from app.tools.registry import Toolbox
-from app.tools.salesforce import format_slot_label
+from app.tools.salesforce import format_slot_label, slot_time_fields
 from app.tools.vonage import VonageClient
 
 # Paging for real-availability slots (availability-slots.md): show PAGE_SIZE real slots per card; a
@@ -281,6 +281,23 @@ def build_graph(
                 candidates.append(opt)
             slots_authority = "scheduler"
             tools_used = _add(tools_used, "scheduling.slots")
+        # AI-BEH-01: feed policy the working-hours input it checks (`hour`), from each slot's ISO
+        # start or its label, and DROP any slot whose time can't be parsed (a malformed LLM time
+        # that would otherwise crash later at reschedule). This activates the working-hours check
+        # (dead until now) so an out-of-hours slot is rejected. We deliberately do NOT attach
+        # `startMinutes`: policy's SLA-window check (120 min) is incoherent for real availability —
+        # genuine FSL slots are legitimately days out and would all be wrongly rejected. Real FSL
+        # slots carry `start`; canned/LLM carry `label`.
+        enriched: list[dict] = []
+        for c in candidates:
+            tf = slot_time_fields(start=c.get("start"), label=c.get("label"),
+                                  tz_name=settings.sf_timezone)
+            if tf is None:
+                log.info("graph.slot_dropped_unparseable", slotId=c.get("slotId"),
+                         label=c.get("label"))
+                continue
+            enriched.append({**c, "hour": tf["hour"]})
+        candidates = enriched
         # Fresh inventory snapshot every pass via the read tool, so a recompute after a lost race
         # sees the new stock. Record find_part as a real tool use when any candidate needs a part.
         part_nos = {c["partNo"] for c in candidates if c.get("partNo")}

@@ -195,6 +195,36 @@ def _parse_iso(s: str) -> datetime:
     return datetime.fromisoformat(s)
 
 
+def slot_time_fields(
+    *, start: str | None, label: str | None, tz_name: str, now: datetime | None = None
+) -> dict | None:
+    """Derive the time fields policy needs from a slot's ISO `start` or its `label` (AI-BEH-01).
+
+    Returns ``{"startMinutes": int, "hour": int}`` where:
+      - startMinutes = whole minutes from `now` to the slot start (NEGATIVE = the slot is past);
+      - hour         = the slot's start hour (0-23) in the business tz, for the working-hours check.
+
+    Returns ``None`` when neither a parseable `start` nor `label` is available — the caller drops
+    that slot rather than offering a time it can't stand behind (also stops a malformed time from
+    crashing later at reschedule). A real FSL slot has `start`; a canned/LLM slot has `label`.
+    """
+    ref = now.astimezone(UTC) if now else datetime.now(UTC)
+    try:
+        if start:
+            dt = _parse_iso(start)
+        elif label:
+            start_iso, _ = slot_label_to_times(label, tz_name, now)
+            dt = _parse_iso(start_iso)
+        else:
+            return None
+    except (ValueError, TypeError):
+        return None
+    return {
+        "startMinutes": round((dt - ref).total_seconds() / 60),
+        "hour": dt.astimezone(ZoneInfo(tz_name)).hour,
+    }
+
+
 def format_slot_label(start_iso: str, end_iso: str, tz_name: str) -> str:
     """A real slot's (start, end) ISO instants → a short human label in the business timezone, e.g.
     ``"Wed 22 Oct, 09:00-11:00"``. Display only; the exact instants still travel as ISO for the
