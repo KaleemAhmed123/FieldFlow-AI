@@ -1,10 +1,9 @@
-"""Read API for the control panel + health/metrics."""
+"""Read API for the control panel + health. Metrics live in Logfire (see app/telemetry.py), not a
+scraped /metrics endpoint — nothing scrapes Prometheus on the Render free tier."""
 
 from __future__ import annotations
 
 from fastapi import APIRouter, Request
-from fastapi.responses import Response
-from prometheus_client import CONTENT_TYPE_LATEST, generate_latest
 from pydantic import BaseModel
 from sqlalchemy import select
 
@@ -70,11 +69,6 @@ async def version() -> dict:
         except Exception:  # noqa: BLE001 — no git / not a repo in the container → unknown
             commit = "unknown"
     return {"commit": commit, "shortCommit": (commit or "")[:7], "branch": branch or "unknown"}
-
-
-@router.get("/metrics")
-async def metrics() -> Response:
-    return Response(generate_latest(), media_type=CONTENT_TYPE_LATEST)
 
 
 @router.get("/reconcile")

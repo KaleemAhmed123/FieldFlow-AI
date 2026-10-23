@@ -47,5 +47,5 @@ async def dlq_replay(request: Request) -> dict:
         raise HTTPException(status_code=503, detail="RabbitMQ unavailable — run `make up` first.")
     count = await broker.replay_dlq()
     for _ in range(count):
-        telemetry.dlq_replays.inc()
+        telemetry.dlq_replays.add(1)
     return {"replayed": count}

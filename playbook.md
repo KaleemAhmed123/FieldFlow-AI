@@ -1324,7 +1324,183 @@ pnpm run types          # regenerate TS types from packages/contract/schema/*.js
 
 ---
 
-## 10. Deployment topology (decided 2026-10-10)
+## 9b. API-key gate (AI-SEC-01, added 2026-10-22)
+
+The orchestrator API is protected by one shared secret in the `X-API-Key` header. Open without it:
+`/health`, `/ready`, `/health/deps`, `/version`, `/metrics` (monitors + Prometheus).
+
+- **Blank key = gate OFF** (local/dev/tests) — nothing changes until you set it.
+- **Turn it on (both sides must match):**
+  1. Generate: `openssl rand -hex 32`.
+  2. Orchestrator: set `API_KEY=<value>` on Render (env var) and in `apps/orchestrator/.env` locally.
+  3. Panel: set `VITE_API_KEY=<same value>` in `apps/control-panel/.env` (+ Vercel env), rebuild.
+- **curl once it's on:** add `-H "X-API-Key: <value>"` to every call except the open paths.
+- **⚠ Production fail-closed (P0-6):** when `APP_ENV=production`, boot REQUIRES `API_KEY`,
+  `VONAGE_SIGNATURE_SECRET`, and `SF_HOOK_SECRET` all set — a blank one aborts startup (by design).
+  Keep `APP_ENV` at its default (`local`) for demo deploys, or set all three before flipping it.
+- **Copilot rate limit (P0-4):** `/copilot/chat` is capped at `COPILOT_RATE_PER_MIN` (10) +
+  `COPILOT_RATE_PER_DAY` (200); over a cap returns a friendly "busy" reply, no Groq spend.
+- **Event retries (P0-5):** a failed event retries 3× (5s/30s/120s) via `events.retry.*` queues
+  before landing in `events.dlq` — a transient outage self-heals; `/ops/dlq/replay` is the last resort.
+**Operate vs simulate (P0-2):**
+- Real operator controls are at `/ops/*` — `/ops/approve` (human Level-3 approval) and
+  `/ops/dlq/replay` — **always mounted**, behind the API key.
+- `/sim/*` (fire event, `fault` toggle, forge reply/payment/photo/delivery) is mounted only when
+  `SIM_ENABLED=true` (the default). **Set `SIM_ENABLED=false` on the production Render deploy** so the
+  forge/chaos routes don't exist there. Keep it true for local + demo deploys.
+- Panel calls moved: Approve/Reject → `/ops/approve`, Replay DLQ → `/ops/dlq/replay`.
+
+---
+
+## 9c. Database migrations — Alembic (AI-DATA-01, added 2026-10-22)
+
+Postgres schema is owned by **Alembic** (versioned migration scripts). `create_all` still builds the
+schema on **SQLite** (local dev + tests) — no migrations there. All commands run from
+`apps/orchestrator`, reading `DATABASE_URL` from `.env` (or the env var).
+
+```bash
+cd apps/orchestrator
+uv run alembic current                 # which migration the DB is on
+uv run alembic upgrade head            # apply all pending migrations
+uv run alembic downgrade -1            # roll back one
+# after editing app/db/models.py — generate a new migration (safe: env.py's include_object guard
+# ignores LangGraph checkpoints + RAG knowledge_chunks, so autogenerate only touches OUR tables):
+uv run alembic revision --autogenerate -m "describe the change"
+```
+
+**First-time adoption on the LIVE Supabase DB (do once, in this order):**
+1. The live DB already has our 5 tables (old `create_all`). From your machine (Supabase
+   `DATABASE_URL` in `apps/orchestrator/.env`), mark it at the baseline **without** running DDL:
+   `cd apps/orchestrator && uv run alembic stamp head`. Touches no data.
+2. Migration-on-deploy is **baked into the Docker image** — `apps/orchestrator/docker-entrypoint.sh`
+   runs `alembic upgrade head` then `exec`s uvicorn (`ENTRYPOINT` + `CMD` in the Dockerfile). So on
+   Render you set **nothing** — no Pre-Deploy (paid/locked), no Docker Command override. Every deploy
+   and every cold-start wake migrates first; `upgrade head` is idempotent so a no-op is instant.
+   (On a *fresh/empty* DB you skip the stamp — `upgrade head` just creates everything.)
+- ⚠ **Order matters — Auto-Deploy is On Commit:** pushing triggers a deploy that runs `upgrade head`.
+  Run `alembic stamp head` (step 1) **before** you push the Dockerfile change, or the first deploy
+  crash-loops on "table already exists".
+- ⚠ Shell scripts are pinned to LF via root `.gitattributes` (`*.sh text eol=lf`) — without it a
+  Windows CRLF checkout breaks the entrypoint inside the Linux container.
+- DB is disposable/test-only: everything reseeds from `app/data/catalog.json` + the seed scripts
+  (§3l), so a clean rebuild is always available if you ever prefer it over stamping.
+
+---
+
+## 9d. CI + reproducible build (AI-SUP-01, added 2026-10-22)
+
+`uv.lock` is **committed** (no longer gitignored) so every build installs the identical tree.
+GitHub Actions (`.github/workflows/ci.yml`) runs on every push/PR: `uv sync --locked --all-extras`
+→ `ruff` → `pytest` (Python 3.12, matching the Docker image) → `pip-audit` (non-blocking CVE scan).
+
+Run the same checks locally:
+```bash
+uv sync --locked --all-extras                 # (repo root) fails if uv.lock drifts from pyproject
+cd apps/orchestrator && uv run ruff check . && uv run pytest -q
+# dependency CVE scan (what CI runs; non-blocking there) — from repo root:
+uv export --locked --all-packages --no-emit-workspace --format requirements-txt > audit-reqs.txt
+uvx pip-audit -r audit-reqs.txt
+```
+- **After editing deps:** run `uv add <pkg>` / `uv sync` so `uv.lock` updates, then commit the lock —
+  else CI's `--locked` step fails.
+- **CVEs — all cleared 2026-10-22:** bumped `pypdf` → 6.21.2 (direct, pyproject); `pillow` → 13.0.0,
+  `certifi` → 2026.10.19, `nltk` → 3.10.4 (transitive, via `uv lock --upgrade-package` — parents
+  allowed the patched versions, no pyproject change). `pip-audit` now reports **no known
+  vulnerabilities**.
+
+---
+
+## 9e. Manual live-sandbox e2e checklist — V-1 (AI-TEST-01 / OQ5)
+
+The one real end-to-end pass before trusting real money: run the orchestrator **locally** against the
+**real Razorpay TEST key + real Salesforce reads**, drive an at-risk job to a paid capture, and read
+the result back. Local (not the public deploy) so it can't send a stray RCS or pollute prod. ⚠ This
+fires a **real** payment link — **you tap it once**; the fake gateway can't be used here (the live
+poller reads Razorpay, so a simulated "paid" won't capture).
+
+**Pre-flight (you):**
+- [ ] `apps/orchestrator/.env`: real `SF_*` creds; `RAZORPAY_KEY_ID=rzp_test_…` + `RAZORPAY_KEY_SECRET=…`
+      (TEST mode); `VONAGE_*` as usual (or leave fake if you only want to verify payment + SF).
+- [ ] Salesforce demo data seeded (§3 seed) — need `SA-OOW` (out-of-warranty → chargeable) present.
+- [ ] If `API_KEY` is set locally, add `-H "X-API-Key: <key>"` to every curl below.
+
+**Run (I drive; you tap once):**
+1. [ ] Start local: `cd apps/orchestrator && uv run uvicorn app.main:app --reload --port 8000`
+       (Windows needs `--reload` — see §4 ProactorEventLoop note). Alembic runs in-process on SQLite;
+       for a Postgres run it migrates via the entrypoint only in Docker, so locally use the dev DB.
+2. [ ] Fire at-risk against the chargeable appointment:
+       `curl -X POST localhost:8000/sim/fire -H 'Content-Type: application/json' -d '{"workOrderId":"WO-PAY","appointmentId":"SA-OOW","reason":"part_missing","eventId":"evt-v1"}'`
+3. [ ] AI proposes → **approve** the human-gated step: `curl -X POST localhost:8000/ops/approve …`
+       (the panel's Approve button does the same).
+4. [ ] Customer picks a slot → a **real** Razorpay payment link (`short_url`) is created.
+5. [ ] **← YOU: open the `short_url`, pay with test card `4111 1111 1111 1111`.** The poller
+       (`payment_poller.py`, every ~10s) fetches Razorpay and captures — **no `/sim/payment`**.
+
+**Verify (read back):**
+- [ ] Case reaches `CLOSED`; `GET /cases/WO-PAY` shows the captured payment in the decision trace.
+- [ ] The SF payment record was written back (check the Salesforce record / the demo payment script).
+- [ ] No double-charge on a re-fire (idempotent capture) — re-run step 2's eventId, expect no new order.
+
+Record the outcome (pass/fail + what you saw) in the remediation plan §6 under V-1.
+
+---
+
+## 9f. Observability — trace a case end to end, LLM analytics, alerts (AI-OBS-01)
+
+Everything streams to **one Logfire project** — no Prometheus/Grafana to host. Spec:
+[`docs/specs/observability-logfire.md`](docs/specs/observability-logfire.md).
+
+### Turn it on
+```
+# On Render (orchestrator service → Environment) AND in apps/orchestrator/.env for local:
+LOGFIRE_TOKEN=<your project write token>                 # from logfire.pydantic.dev → project → Write tokens
+OTEL_INSTRUMENTATION_GENAI_CAPTURE_MESSAGE_CONTENT=SPAN_ONLY   # capture prompts+completions (fake data → safe)
+```
+Blank token → every trace/metric call is a no-op (tests/offline unaffected). `OTEL_...` must be a
+**real process env var** (Render env var, or `$env:OTEL_INSTRUMENTATION_GENAI_CAPTURE_MESSAGE_CONTENT="SPAN_ONLY"`
+in the shell before uvicorn) — it's read by the OTel instrumentation, not from `.env`.
+
+### Trace ONE case from the SF call to the end
+1. Fire a case (real SF trigger, or the sim): `POST /webhooks/sf/at-risk` (§3g) or `POST /sim/appointment-at-risk` (§3).
+2. Logfire → **Live** view. You'll see one connected tree:
+   ```
+   POST /webhooks/sf/at-risk            ← the SF call (FastAPI span)
+   └─ process event                     ← the consumer (same trace — traceparent crossed the queue)
+      └─ case recovery  correlationId=… reason=… status=…
+         ├─ node load_context   → SELECT … (SQLAlchemy spans) + Salesforce reads
+         ├─ node retrieve_knowledge
+         ├─ node generate_options → groq chat  (gen_ai.usage.input_tokens / output_tokens)
+         ├─ node policy_validate  (outcome)
+         ├─ node offer_to_customer → Vonage send
+         └─ node close            status=CLOSED
+   ```
+3. **Follow one case:** in **Explore**, run
+   `SELECT * FROM records WHERE attributes->>'correlationId' = 'WO-123' ORDER BY start_timestamp`
+   — every span AND every structlog line for that case, in order. That's your 3am debugger.
+4. A failed case: filter `WHERE is_exception` or `attributes->>'status' = 'FAILED'` → jump straight to the node that threw + its logs.
+
+### LLM dashboard + analytics
+- Logfire ships an **LLM panel** — it reads the `gen_ai.*` attributes our Groq span and the
+  auto-instrumented Gemini calls emit: tokens in/out, latency, model, per-provider. Open it from the
+  left nav (AI / LLM).
+- Build a saved **Dashboard** (Dashboards → New) from these queries (each a chart):
+  - requests/min: `SELECT time_bucket('1 minute', start_timestamp), count(*) FROM records WHERE span_name='case recovery' GROUP BY 1`
+  - p95 case latency: `SELECT time_bucket('5 minutes', start_timestamp), approx_percentile(0.95, duration) FROM records WHERE span_name='case recovery' GROUP BY 1`
+  - decision-outcome split: metric `fieldflow.decisions` by `outcome`
+  - provider-fallback rate: metric `fieldflow.proposer_fallback` by `provider`
+  - LLM tokens/day: `SELECT time_bucket('1 day', start_timestamp), sum((attributes->>'gen_ai.usage.output_tokens')::int) FROM records WHERE attributes ? 'gen_ai.usage.output_tokens' GROUP BY 1`
+
+### Alert → Discord (FAILED case / DLQ growth)
+1. Discord → Server Settings → Integrations → **Webhooks** → New Webhook → pick a channel → **Copy URL**.
+2. Logfire → **Alerts** → New alert. Query, e.g. a FAILED case in the last 5 min:
+   `SELECT count(*) FROM records WHERE span_name='case recovery' AND attributes->>'status'='FAILED' AND start_timestamp > now() - interval '5 minutes'`
+   Condition: result `> 0`. Channel: **Discord** → paste the webhook URL.
+3. (Optional) DLQ growth: alert on the `fieldflow.events_failed` metric rising.
+
+> **USER action items:** set `LOGFIRE_TOKEN` + `OTEL_...` on Render; create the Discord webhook and
+> build the alert; (optional) build the dashboard. The code side is done — spans/metrics already flow
+> once the token is set. **Junior-friendly:** building the dashboard panels + the alert from the
+> queries above.
 
 *Where each piece runs for the hosted demo. All free tiers.*
 

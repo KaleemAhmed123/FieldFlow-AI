@@ -7,7 +7,7 @@ route in isolation (no DB/broker), so it stays fast and offline.
 
 from __future__ import annotations
 
-from app.auth import ApiKeyMiddleware
+from app.auth import OPEN_PATHS, ApiKeyMiddleware
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
@@ -20,11 +20,20 @@ def _client(api_key: str) -> TestClient:
     def cases() -> dict:
         return {"ok": True}
 
+    @app.post("/ops/approve")
+    def approve() -> dict:
+        return {"ok": True}
+
     @app.get("/health")
     def health() -> dict:
         return {"status": "ok"}
 
     return TestClient(app)
+
+
+def test_allowlist_is_exactly_the_safe_paths() -> None:
+    # Lock the allowlist so no one widens it by accident — the only unauthenticated routes.
+    assert OPEN_PATHS == {"/health", "/ready", "/health/deps", "/version"}
 
 
 def test_blank_key_leaves_the_gate_off() -> None:
@@ -42,3 +51,9 @@ def test_allowlist_and_preflight_stay_open() -> None:
     c = _client("secret123")
     assert c.get("/health").status_code == 200          # monitor allowlist — no key needed
     assert c.options("/cases").status_code != 401       # CORS preflight passes the gate
+
+
+def test_every_non_allowlisted_route_is_gated() -> None:
+    c = _client("secret123")
+    assert c.post("/ops/approve").status_code == 401                                  # no key
+    assert c.post("/ops/approve", headers={"X-API-Key": "secret123"}).status_code == 200  # keyed

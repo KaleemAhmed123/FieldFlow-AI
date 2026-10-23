@@ -52,10 +52,10 @@ log = get_logger("main")
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    configure_logging(settings.log_level)
-    # Logfire — the god-eye view (Step 12). send_to_logfire='if-token-present' makes it a no-op
-    # offline (tests, keyless dev) and stream live traces when LOGFIRE_TOKEN is set. Instruments
-    # every FastAPI request. Wrapped so observability can never crash the app.
+    # Logfire — the god-eye view (Step 12). Configured FIRST, before logging, so the structlog→
+    # Logfire bridge (in configure_logging) binds to a live client and every log rides a trace.
+    # send_to_logfire='if-token-present' → a no-op offline (tests, keyless dev) and live traces when
+    # LOGFIRE_TOKEN is set. Each instrument_* call is wrapped so observability can never crash boot.
     try:
         import logfire
 
@@ -64,11 +64,23 @@ async def lifespan(app: FastAPI):
             send_to_logfire="if-token-present",
             service_name="fieldflow-orchestrator",
         )
-        logfire.instrument_fastapi(app)
-        log.info("logfire.configured", enabled=bool(settings.logfire_token))
+        logfire.instrument_fastapi(app)        # every HTTP request → a span
+        logfire.instrument_google_genai()      # Gemini calls → tokens + cost, automatic
     except Exception as exc:  # noqa: BLE001 — observability must never take the app down
-        log.error("logfire.configure_failed", error=str(exc))
+        import logging as _logging
+        _logging.getLogger("main").error("logfire.configure_failed: %s", exc)
+    configure_logging(settings.log_level)
+    log.info("logfire.configured", enabled=bool(settings.logfire_token))
     await init_db()
+    # SQLAlchemy queries into the trace (needs the engine, so after init_db). Groq is instrumented
+    # by hand in app/llm/groq.py (the groq SDK has no auto-instrumentor).
+    try:
+        import logfire
+
+        from app.db.session import get_engine
+        logfire.instrument_sqlalchemy(engine=get_engine())
+    except Exception as exc:  # noqa: BLE001 — observability must never take the app down
+        log.error("logfire.instrument_sqlalchemy_failed", error=str(exc))
     # Mockable tools + the compiled graph: built once so paused cases resume on the same
     # checkpointer. Swap the fakes / checkpointer for real ones in a later step.
     # Vonage RCS (Step 9b): real send is armed only when key+secret+agent_id+test_to are all set

@@ -14,12 +14,11 @@ dependencies = [
     "langgraph>=0.2",
     "structlog>=24.1",
     "pydantic-settings>=2.4",
-    "prometheus-client>=0.20",
     "llama-index-core>=0.14.25",
     "llama-index-vector-stores-postgres>=0.9.0",
     "llama-index-embeddings-jinaai>=0.7.0",
     "llama-index-postprocessor-jinaai-rerank>=0.6.0",
-    "pypdf>=6.19.0",
+    "pypdf>=6.21.1",  # 6.21.1 clears the pip-audit CVEs in 6.19.0 (AI-SUP-01 follow-up)
     "reportlab>=5.0.1",
     "groq>=0.11",
     "google-genai>=0.3",
@@ -28,7 +27,8 @@ dependencies = [
     "langgraph-checkpoint-postgres>=3.1.2",
     "psycopg[binary]>=3.3.6",
     "pyjwt[crypto]>=2.8",
-    "logfire[fastapi]>=5.1.1",
+    # extras: sqlalchemy → SQL in traces; google-genai → Gemini token/cost auto-instrumentation
+    "logfire[fastapi,sqlalchemy,google-genai]>=5.1.1",
     "tzdata>=2024.1",  # IANA tz db for zoneinfo (Windows has none) — slot-label → UTC (step 12)
     "mcp>=1.2",         # MCP client SDK for the Salesforce Hosted MCP copilot path (step 12 Task 4)
     "alembic>=1.20.1",
@@ -46,3 +46,8 @@ build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]
 packages = ["app"]
+
+[tool.logfire]
+# Offline/dev/tests have no LOGFIRE_TOKEN and never call configure() — silence the one-time
+# "not configured" warning. Production calls logfire.configure() in main.py, so this is moot there.
+ignore_no_config = true

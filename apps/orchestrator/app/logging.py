@@ -9,6 +9,7 @@ from __future__ import annotations
 import logging
 from contextvars import ContextVar
 
+import logfire
 import structlog
 
 correlation_id: ContextVar[str | None] = ContextVar("correlation_id", default=None)
@@ -29,6 +30,10 @@ def configure_logging(level: str = "INFO") -> None:
             _inject_correlation_id,
             structlog.processors.add_log_level,
             structlog.processors.TimeStamper(fmt="iso"),
+            # Bridge every structlog line into the active Logfire span, so the rich correlationId
+            # logs show up inside the case trace (not just in stdout). No-op when Logfire has no
+            # token (tests/offline). Placed before the renderer so it gets the full event dict.
+            logfire.StructlogProcessor(),
             structlog.processors.JSONRenderer(),
         ],
         wrapper_class=structlog.make_filtering_bound_logger(

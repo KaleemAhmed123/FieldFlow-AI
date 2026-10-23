@@ -17,6 +17,13 @@ def get_sessionmaker() -> async_sessionmaker:
     return _sessionmaker
 
 
+def get_engine() -> AsyncEngine:
+    """The one engine (for logfire.instrument_sqlalchemy — every SQL query in the trace)."""
+    if _engine is None:
+        raise RuntimeError("DB not initialised — call init_db() first.")
+    return _engine
+
+
 async def init_db() -> None:
     """Create the engine + session factory.
 

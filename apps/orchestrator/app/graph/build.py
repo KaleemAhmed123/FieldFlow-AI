@@ -23,11 +23,13 @@ from __future__ import annotations
 
 from typing import Any, TypedDict
 
+import logfire
 from fieldflow_contract import Card, CardAction, SlotOption
+from langgraph.errors import GraphBubbleUp
 from langgraph.graph import END, StateGraph
 from langgraph.types import Command, interrupt
 
-from app import policy
+from app import policy, telemetry
 from app.commerce.service import rupees
 from app.config import settings
 from app.llm.confidence import confidence_factors, score_confidence
@@ -252,6 +254,8 @@ def build_graph(
         # deterministic; whatever it returns is untrusted and re-validated by policy next.
         reason = state["event"].get("reason", "technician_delay")
         proposal = propose(reason, state["context"], state.get("knowledgeSources", []))
+        if proposal.degraded:  # AI-OBS-01: fell back off the primary provider → count it
+            telemetry.proposer_fallback.add(1, {"provider": proposal.provider})
         candidates = proposal.options
         tools_used = state.get("toolsUsed", [])
         # Real availability (availability-slots.md): ask Field Service for genuine bookable times
@@ -347,6 +351,7 @@ def build_graph(
             "removed": result["removed"],
             "slotsAuthority": state.get("slotsAuthority", "fallback"),
         }
+        telemetry.decisions.add(1, {"outcome": result["policyResult"]})  # AI-OBS-01: outcome split
         log.info("graph.policy_validate", valid=len(valid), result=result["policyResult"],
                  confidence=round(final, 4))
         return {"options": valid, "policy_result": result, "confidence": final,
@@ -575,6 +580,29 @@ def build_graph(
             return {"status": "REJECTED"}
         return {"status": "CLOSED"}
 
+    def _traced(node_name, node_fn):
+        """Wrap a node so it opens a span — the trace then shows each stage (load_context → RAG →
+        generate_options → policy_validate → …) with its own timing under the case span.
+
+        A `GraphBubbleUp` (LangGraph's pause/redirect control signal, e.g. `interrupt()` waiting for
+        a human or customer) is normal flow, so the span is closed cleanly, NOT recorded as an error
+        — otherwise every human/customer wait would show up as a failed span.
+        """
+        def run(state):
+            span = logfire.span("node {node}", node=node_name)
+            span.__enter__()
+            try:
+                result = node_fn(state)
+            except GraphBubbleUp:
+                span.__exit__(None, None, None)              # a pause/redirect — not a failure
+                raise
+            except BaseException as exc:
+                span.__exit__(type(exc), exc, exc.__traceback__)  # real error → record it
+                raise
+            span.__exit__(None, None, None)
+            return result
+        return run
+
     g = StateGraph(GraphState)
     for name, fn in [
         ("load_case", load_case), ("load_context", load_context),
@@ -588,7 +616,7 @@ def build_graph(
         ("await_payment", await_payment), ("settle_payment", settle_payment),
         ("verify", verify), ("close", close),
     ]:
-        g.add_node(name, fn)
+        g.add_node(name, _traced(name, fn))
 
     g.set_entry_point("load_case")
     g.add_edge("load_case", "load_context")

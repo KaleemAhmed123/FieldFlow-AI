@@ -14,6 +14,7 @@ from __future__ import annotations
 
 from typing import Any
 
+import logfire
 from fastapi import HTTPException
 from fieldflow_contract import AppointmentAtRisk
 from langgraph.types import Command
@@ -76,7 +77,7 @@ async def _persist(session: AsyncSession, cid: str, result: dict) -> str:
                              payload=result["decision"]))
         session.add(AiDecision(correlation_id=cid, decision=result["decision"]))
         if status == "OPTIONS_SENT":
-            telemetry.cards_sent.inc()
+            telemetry.cards_sent.add(1)
     else:
         # On close, prefer the payment receipt in the audit payload (money is the headline effect).
         session.add(AuditLog(correlation_id=cid, kind=status.lower(),
@@ -138,7 +139,7 @@ async def record_delivery_status(
         vonage.send_sms(cid, text)
         session.add(AuditLog(correlation_id=cid, kind="sms_fallback",
                              payload={"reason": status, "text": text}))
-        telemetry.sms_fallbacks.inc()
+        telemetry.sms_fallbacks.add(1)
         log.info("case.sms_fallback", correlationId=cid, reason=status)
 
     await session.commit()
@@ -188,24 +189,32 @@ async def handle_event(session: AsyncSession, event: AppointmentAtRisk, *, graph
 
     # Idempotency — effect-once even if the event arrives twice (NFR-2).
     if await session.get(IdempotencyKey, event.eventId):
-        telemetry.events_duplicate.inc()
+        telemetry.events_duplicate.add(1)
         log.info("event.duplicate", eventId=event.eventId)
         return {"status": "duplicate", "correlationId": event.correlationId}
     session.add(IdempotencyKey(key=event.eventId))
 
     config = {"configurable": {"thread_id": event.correlationId}}
-    try:
-        result = await graph.ainvoke({"event": event.model_dump(mode="json")}, config)
-    except Exception as exc:  # noqa: BLE001 — record a FAILED case for visibility, then re-raise
-        await session.rollback()  # drop the uncommitted idempotency key so a replay can reprocess
-        await _persist_failed(session, event.correlationId, exc)
-        await session.commit()
-        log.error("event.failed", error=str(exc), errorType=type(exc).__name__)
-        raise
+    # The god-eye root span: every node, SQL query, LLM call and the final status hang under it,
+    # searchable by correlationId. Continues the webhook's trace (the broker attached it).
+    with logfire.span(
+        "case recovery", correlationId=event.correlationId, eventId=event.eventId,
+        reason=event.reason,
+    ) as span:
+        try:
+            result = await graph.ainvoke({"event": event.model_dump(mode="json")}, config)
+        except Exception as exc:  # noqa: BLE001 — record a FAILED case for visibility, then re-raise
+            await session.rollback()  # drop the uncommitted idempotency key so a replay reprocesses
+            await _persist_failed(session, event.correlationId, exc)
+            await session.commit()
+            span.set_attribute("status", "FAILED")
+            log.error("event.failed", error=str(exc), errorType=type(exc).__name__)
+            raise
 
-    status = await _persist(session, event.correlationId, result)
-    await session.commit()
-    telemetry.events_processed.inc()
+        status = await _persist(session, event.correlationId, result)
+        await session.commit()
+        span.set_attribute("status", status)
+    telemetry.events_processed.add(1)
     log.info("event.processed", status=status)
     return {"status": "ok", "case": status, "correlationId": event.correlationId}
 
@@ -242,7 +251,7 @@ async def resume_case(
 
     if idempotency_key is not None:
         if await session.get(IdempotencyKey, idempotency_key):
-            telemetry.events_duplicate.inc()
+            telemetry.events_duplicate.add(1)
             log.info("resume.duplicate", key=idempotency_key)  # same payment fired twice → drop
             case = (
                 await session.execute(select(Case).where(Case.correlation_id == correlation_id_))
