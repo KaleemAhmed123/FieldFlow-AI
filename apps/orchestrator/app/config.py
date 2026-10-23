@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from pydantic import model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -162,6 +163,26 @@ class Settings(BaseSettings):
     # (seconds) fronts /health/deps so a ~5s panel poll can't hammer deps or spend credit.
     logfire_token: str = ""
     health_deps_cache_ttl_s: float = 30.0
+
+    @model_validator(mode="after")
+    def _fail_closed_in_production(self) -> Settings:
+        """AI-SEC-03 / P0-6: in production, a blank security secret must ABORT boot, not silently
+        skip the check. These endpoints are public, so a blank key/secret there is an open door.
+        Outside production (local/staging/demo) blanks stay allowed — the mock-first convention.
+        """
+        if self.app_env == "production":
+            required = {
+                "API_KEY": self.api_key,                            # the whole-API gate (AI-SEC-01)
+                "VONAGE_SIGNATURE_SECRET": self.vonage_signature_secret,  # inbound webhook verify
+                "SF_HOOK_SECRET": self.sf_hook_secret,              # SF at-risk trigger verify
+            }
+            missing = [name for name, val in required.items() if not val]
+            if missing:
+                raise ValueError(
+                    "production requires these secrets (fail-closed, AI-SEC-03): "
+                    + ", ".join(missing)
+                )
+        return self
 
     @property
     def confidence_weights(self) -> dict[str, float]:
