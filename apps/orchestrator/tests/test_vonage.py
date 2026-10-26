@@ -2,7 +2,8 @@
   - Card → RCS payload mapping (carousel postback + payment open-url),
   - build_vonage arming (fake unless key+secret+agent+test_to all set),
   - webhook JWT signature verify (stdlib HS256 + payload_hash) and postback parsing,
-  - the send→tap→resume round-trip + message_uuid dedup, via the real graph on fakes.
+  - the send→tap→resume round-trip + message_uuid dedup, via the real graph on fakes,
+  - route-level guard: a tampered JWT is dropped silently (200, case NOT resumed).
 No network, no Vonage creds — the real send/webhook path is exercised by the gated live fire."""
 
 from __future__ import annotations
@@ -22,7 +23,10 @@ from app.tools.vonage import (
     build_vonage,
     card_to_rcs,
 )
+from app.webhooks import router
 from app.webhooks.routes import parse_postback, status_recipient, verify_vonage_jwt
+from fastapi import FastAPI
+from fastapi.testclient import TestClient
 from fieldflow_contract import Card, CardAction, SlotOption, make_event
 from sqlalchemy import func, select
 
@@ -181,3 +185,46 @@ async def test_record_delivery_status_writes_audit(sessionmaker, vonage):
             select(func.count()).select_from(AuditLog).where(AuditLog.kind == "delivery_status")
         )).scalar_one()
     assert rows == 1
+
+
+# --- Route-level guard: bad JWT is dropped silently, case NOT resumed ----------------------------
+
+def _webhook_client(monkeypatch, secret: str = "test-secret") -> TestClient:
+    """Minimal FastAPI app with the real webhooks router mounted, no DB needed for auth tests."""
+    monkeypatch.setattr(settings, "vonage_signature_secret", secret)
+    app = FastAPI()
+    app.include_router(router)
+    return TestClient(app)
+
+
+def test_tampered_jwt_returns_200_without_resuming(monkeypatch) -> None:
+    """A bad Vonage JWT (wrong secret) must be dropped silently with 200 — never retried.
+
+    The real guard is in webhooks/routes.py:87. This route-level test proves that a tampered or
+    replayed token cannot trigger case_service.resume_case, even when the postback looks valid.
+    The signature-verify unit test in test_verify_vonage_jwt_accepts_valid_and_rejects_tampered
+    covers the crypto; this test covers the HTTP path that enforces it.
+    """
+    client = _webhook_client(monkeypatch, secret="test-secret")
+
+    # A postback body that looks legitimate but signed with the wrong secret.
+    body = json.dumps({
+        "message_type": "reply",
+        "message_uuid": "tampered-uuid",
+        "reply": {"id": "WO-FAKE|slot-1|1"},
+    }).encode()
+
+    # Sign with a DIFFERENT secret — this is what an attacker or a config mistake would send.
+    bad_token = _sign("wrong-secret", {"payload_hash": hashlib.sha256(body).hexdigest()})
+
+    response = client.post(
+        "/webhooks/inbound",
+        content=body,
+        headers={"Authorization": f"Bearer {bad_token}",
+                 "Content-Type": "application/json"},
+    )
+
+    # Route must always return 200 (Vonage would retry a non-200 indefinitely).
+    assert response.status_code == 200
+    # The response body is empty (no JSON) — the guard bailed out before any DB work.
+    assert response.content == b""

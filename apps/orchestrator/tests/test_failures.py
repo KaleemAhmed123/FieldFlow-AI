@@ -3,12 +3,17 @@
      then — a 'delivered' status, or a case not awaiting, sends nothing).
   7b Salesforce-down: a down backend makes handle_event raise, which is what dead-letters the
      message to events.dlq at runtime (the broker nack path). The toggle flips reads on and off.
+  7c RAG-down: a knowledge-store failure must degrade to empty knowledgeSources and still produce
+     OPTIONS_SENT — the decision pipeline must not break when the vector store is unavailable.
 The actual DLQ land+replay needs RabbitMQ and is a manual demo (playbook §3f)."""
 
 from __future__ import annotations
 
 import pytest
 from app.db.models import AuditLog, Case
+from app.graph.build import build_graph
+from app.graph.checkpointer import make_checkpointer
+from app.rag.store import FakeKnowledgeStore
 from app.services import case_service
 from app.tools.salesforce import FakeSalesforce
 from app.tools.vonage import FakeVonage
@@ -96,3 +101,37 @@ def test_fault_toggle_flips_reads():
         sf.get_appointment("SA-19281")
     sf.down = False
     assert sf.get_appointment("SA-19281") is not None  # recovered
+
+
+# --- 7c: RAG / vector-store down → decision continues with empty knowledgeSources ----------------
+
+class _BrokenKnowledgeStore(FakeKnowledgeStore):
+    """A knowledge store that always raises — simulates the vector DB being unavailable."""
+
+    def retrieve(self, query: str, k: int) -> list:
+        raise RuntimeError("vector store down")
+
+
+async def test_rag_failure_degrades_gracefully(sessionmaker, toolbox, vonage):
+    """If retrieve_knowledge raises, the graph must still reach OPTIONS_SENT.
+
+    The RAG node is wrapped in a bare `except Exception` (graph/build.py:207) that degrades to
+    knowledgeSources=[].  This test exercises that path end-to-end so a regression — e.g. someone
+    accidentally removing the try/except — is caught immediately.
+    """
+    broken_knowledge = _BrokenKnowledgeStore()
+    broken_graph = build_graph(toolbox, vonage, broken_knowledge, checkpointer=make_checkpointer())
+
+    event = make_event(work_order_id="WO-RAG-DOWN", reason="technician_delay")
+    async with sessionmaker() as s:
+        await case_service.handle_event(s, event, graph=broken_graph)
+
+    async with sessionmaker() as s:
+        case = (await s.execute(
+            select(Case).where(Case.correlation_id == "WO-RAG-DOWN")
+        )).scalar_one()
+
+    # Pipeline must complete — OPTIONS_SENT — even with no knowledge sources.
+    assert case.status == "OPTIONS_SENT"
+    # The degraded node returns [] so the trace key is present but empty (not missing).
+    assert case.decision_trace.get("knowledgeSources") == []
