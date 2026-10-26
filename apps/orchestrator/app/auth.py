@@ -33,6 +33,9 @@ class ApiKeyMiddleware(BaseHTTPMiddleware):
             not self._api_key                      # gate off (blank key — dev/test)
             or request.method == "OPTIONS"         # CORS preflight: no custom header is sent
             or request.url.path in OPEN_PATHS      # monitors
+            or request.url.path.startswith("/webhooks/")  # Vonage/SF: external callers that can't
+                                                   # send X-API-Key; each webhook authenticates
+                                                   # itself (Vonage JWT / SF shared secret)
         ):
             return await call_next(request)
         presented = request.headers.get("x-api-key", "")

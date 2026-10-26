@@ -24,6 +24,10 @@ def _client(api_key: str) -> TestClient:
     def approve() -> dict:
         return {"ok": True}
 
+    @app.post("/webhooks/inbound")
+    def inbound() -> dict:
+        return {"ok": True}
+
     @app.get("/health")
     def health() -> dict:
         return {"status": "ok"}
@@ -57,3 +61,9 @@ def test_every_non_allowlisted_route_is_gated() -> None:
     c = _client("secret123")
     assert c.post("/ops/approve").status_code == 401                                  # no key
     assert c.post("/ops/approve", headers={"X-API-Key": "secret123"}).status_code == 200  # keyed
+
+
+def test_webhooks_bypass_the_gate() -> None:
+    # Vonage/SF POST here with no X-API-Key — they authenticate per-webhook, so the gate must not
+    # 401 them (the bug: real customer taps hit /webhooks/inbound and got a 401).
+    assert _client("secret123").post("/webhooks/inbound").status_code == 200
