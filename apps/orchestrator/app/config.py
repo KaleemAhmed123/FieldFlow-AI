@@ -169,6 +169,12 @@ class Settings(BaseSettings):
         """AI-SEC-03 / P0-6: in production, a blank security secret must ABORT boot, not silently
         skip the check. These endpoints are public, so a blank key/secret there is an open door.
         Outside production (local/staging/demo) blanks stay allowed — the mock-first convention.
+
+        Also enforces two deployment hygiene rules (AI-SEC-01):
+          - SIM_ENABLED must be False: the /sim/* forge surface (fire fake events, forge replies,
+            advance payments) must never be mounted in production.
+          - RABBITMQ_URL must not contain the default guest:guest credential: a forgotten env var
+            would silently connect with RabbitMQ's shipped default, leaving the broker open.
         """
         if self.app_env == "production":
             required = {
@@ -181,6 +187,20 @@ class Settings(BaseSettings):
                 raise ValueError(
                     "production requires these secrets (fail-closed, AI-SEC-03): "
                     + ", ".join(missing)
+                )
+            # /sim/* forge surface must be disabled (AI-SEC-01 / P0-2).
+            if self.sim_enabled:
+                raise ValueError(
+                    "production requires SIM_ENABLED=false — the /sim/* routes expose a forge "
+                    "surface (fire fake events, forge replies, advance payments) that must never "
+                    "be mounted on a real deployment (AI-SEC-01)."
+                )
+            # RabbitMQ must not use the shipped default credential (AI-SEC-03).
+            if "guest:guest" in self.rabbitmq_url:
+                raise ValueError(
+                    "production requires RABBITMQ_URL with a non-default credential — "
+                    "guest:guest is RabbitMQ's factory default and must be replaced before "
+                    "exposing the broker (AI-SEC-03)."
                 )
         return self
 
